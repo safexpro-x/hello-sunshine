@@ -1,0 +1,112 @@
+# Zentord — Production Launch Checklist
+
+This document is the single source of truth for taking Zentord live.
+Last updated for v2026.05 — dual AI provider, blocked-IP self-service, hardened security headers.
+
+────────────────────────────────────────
+1. AI PROVIDER (Voice hold assistant)
+────────────────────────────────────────
+
+Zentord supports two providers — switchable any time from
+  Admin Panel → Voice AI → "Provider"
+
+  • OpenAI       — premium quality, you pay OpenAI directly with your own key.
+  • Lovable AI   — managed gateway, no key needed, billed via Lovable workspace.
+
+The switch takes effect on the very next call. No redeploy.
+
+If a provider call fails (rate limit, billing, network), the assistant
+automatically returns a localized fallback line so the customer never
+hears a backend error.
+
+For OpenAI key setup, see /openai.txt.
+
+────────────────────────────────────────
+2. SECURITY (must verify before launch)
+────────────────────────────────────────
+
+Edge / HTTP headers (set by hosting provider, also declared in index.html):
+
+  Content-Security-Policy:
+    default-src 'self' https: data: blob:;
+    script-src 'self' 'unsafe-inline' 'unsafe-eval' https:;
+    style-src 'self' 'unsafe-inline' https://fonts.googleapis.com;
+    font-src 'self' https://fonts.gstatic.com data:;
+    img-src 'self' data: blob: https:;
+    media-src 'self' blob: https:;
+    connect-src 'self' https: wss: blob:;
+    frame-ancestors 'self' https:;
+    base-uri 'self';
+    form-action 'self';
+  Strict-Transport-Security: max-age=63072000; includeSubDomains; preload
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: SAMEORIGIN
+  Referrer-Policy: strict-origin-when-cross-origin
+  Permissions-Policy: geolocation=(), camera=(), microphone=(self), payment=(self), interest-cohort=()
+
+Database:
+  • Row-Level Security ENABLED on every table.
+  • Companies can only see their own calls / employees / blocked_ips.
+  • Admin role bypass is via has_role() security-definer function only.
+  • Public widget exposes ONLY an opaque short slug — the real api_key never
+    leaves the server.
+
+Per-call session tokens:
+  • One-time, expire on call end OR after 2h, whichever first.
+  • call_sessions.consumed_at is set by /endCall.
+
+────────────────────────────────────────
+3. COMPANY DASHBOARD
+────────────────────────────────────────
+
+Each approved company sees:
+  • KPIs: total calls, avg duration, employees, last 24h, AI-only,
+    agent-picked, pickup rate.
+  • Plan card with quota & expiry.
+  • Tabs: Integrate · Profile · Security · Recent calls.
+  • Security tab: Domain whitelist, Blocked IPs (add/remove), App keys.
+  • Profile tab: edit company name, description (used by AI), email,
+    mobile, website — saved instantly, used by AI on the next call.
+
+────────────────────────────────────────
+4. CUSTOMER WIDGET (voice call)
+────────────────────────────────────────
+
+Controls:
+  • Mic on/off
+  • Speaker on/off (mutes both AI TTS and remote agent audio)
+  • End call
+
+Flow:
+  Choose language → optional name → start call → AI hold (instant listen
+  & respond loop) → human agent picks up → AI silenced → call.
+
+Latency tuning:
+  • TTS warmed on language pick.
+  • Recognition restarts ~250–600ms after AI finishes speaking.
+  • De-duplicates repeated user utterances to avoid double-replies.
+
+────────────────────────────────────────
+5. EMAIL & PAYMENTS
+────────────────────────────────────────
+
+  • SMTP: Admin → SMTP. Falls back to Supabase email if disabled.
+  • Razorpay: Admin → Payments. Test/live mode toggle. Webhooks verified
+    by signature.
+
+────────────────────────────────────────
+6. PRE-LAUNCH SMOKE TEST
+────────────────────────────────────────
+
+  [ ] Sign up new company → admin approves → free trial granted.
+  [ ] Add agent → agent receives invite → can log in.
+  [ ] Embed widget on a test domain → call connects → AI greets in
+      chosen language → agent picks up → AI stops → call duration
+      logged → quota incremented.
+  [ ] Block an IP from Company → Security → that IP cannot start a call.
+  [ ] Provider switch (OpenAI ↔ Lovable AI) — both work on next call.
+  [ ] Speaker toggle silences AI mid-sentence.
+  [ ] Lighthouse: Performance > 85, Best Practices > 95, SEO > 95.
+  [ ] securityheaders.com grade A or A+.
+
+You're ready to ship 🚀

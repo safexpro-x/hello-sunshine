@@ -1,0 +1,425 @@
+================================================================================
+  ZENTORD — APNI HOSTING / VPS PE SETUP KARNE KI COMPLETE HINDI GUIDE
+  (Lovable se export ki hui website ko khud ke server pe chalana)
+================================================================================
+
+Yeh file step-by-step batati hai ki Lovable me bani Zentord website ko aap
+apne khud ke VPS / shared hosting / cPanel / Docker pe kaise chalayenge.
+
+Backend (database, auth, edge functions) Lovable Cloud (managed Supabase) pe
+hi rahega — sirf FRONTEND aap apne server pe host karenge. Iska matlab:
+
+   ✓ Aapko alag se database setup karne ki zarurat NAHI
+   ✓ Edge functions auto-deploy hote hain Lovable se
+   ✓ Aapko sirf  dist/  folder apne server pe upload karna hai
+   ✓ Service-role key kabhi browser me nahi jaati — safe hai
+
+--------------------------------------------------------------------------------
+  INDEX
+--------------------------------------------------------------------------------
+  1. Pehle samjho — kya kahaan chalega
+  2. Code apne computer me lao (GitHub se ya Lovable se export)
+  3. Local me build banao (dist/ folder)
+  4. Hosting ke 4 tarike — koi ek choose karo:
+       4A. VPS + Nginx        (Ubuntu, DigitalOcean, Hetzner, AWS EC2)
+       4B. Docker / Compose
+       4C. cPanel / Shared hosting
+       4D. Vercel / Netlify / Cloudflare Pages (free, easy)
+  5. Domain connect karo (call.yourcompany.com)
+  6. HTTPS lagao (Let's Encrypt — FREE)
+  7. Firebase Google login enable karo
+  8. Admin panel se branding change karo (logo, naam, colors)
+  9. Domain whitelist + App keys setup
+ 10. Naya update deploy karne ka tarika
+ 11. Common errors aur fix
+ 12. Backup & recovery
+
+================================================================================
+  1. PEHLE SAMJHO — KYA KAHAAN CHALEGA
+================================================================================
+
+  +------------------------------+        +-------------------------------+
+  |  AAPKA SERVER (VPS/Hosting)  |        |  LOVABLE CLOUD (managed)      |
+  |                              |  HTTPS |                               |
+  |  - Nginx / Apache            | -----> |  - Postgres database          |
+  |  - dist/ folder (static SPA) |        |  - Authentication             |
+  |  - SSL certificate           |        |  - Edge functions             |
+  |  - (optional) coturn TURN    |        |  - File storage (logos)       |
+  +------------------------------+        +-------------------------------+
+
+  Aapka kaam:    sirf  dist/  folder serve karna
+  Lovable ka:    database + auth + edge functions (auto-managed)
+
+================================================================================
+  2. CODE APNE COMPUTER ME LAO
+================================================================================
+
+OPTION A — GitHub se (recommended)
+-----------------------------------
+  1. Lovable editor me top-right "GitHub" button click karo
+  2. "Connect to GitHub" -> repo create karo
+  3. Apne computer me:
+
+         git clone https://github.com/<your-username>/zentord.git
+         cd zentord
+
+OPTION B — Direct download (GitHub ke bina)
+--------------------------------------------
+  Lovable -> Settings -> Export project -> ZIP download -> extract
+
+================================================================================
+  3. LOCAL ME BUILD BANAO
+================================================================================
+
+Requirements (apne computer pe):
+  - Node.js 20+         https://nodejs.org
+  - Bun 1.1+            https://bun.sh   (curl -fsSL https://bun.sh/install | bash)
+
+Commands:
+  cd zentord
+  bun install            # ek baar
+  bun run build          # har baar jab code change ho
+
+  → Output: ./dist/  folder (yahi upload karna hai)
+
+NOTE: .env values build ke andar bake ho jaati hain. Server pe alag se
+.env rakhne ki zarurat NAHI. Sirf  dist/  upload karo.
+
+================================================================================
+  4A. VPS + NGINX  (Ubuntu 22.04 / Debian)
+================================================================================
+
+Maan lo aapka VPS IP hai:  884.55.55.66
+Aur domain hai:            call.yourcompany.com
+
+STEP 1 — DNS set karo (apne domain provider GoDaddy/Hostinger/Namecheap pe):
+
+    Type: A    Host: call    Value: 884.55.55.66    TTL: 300
+
+  (Root domain ke liye Host: @  use karo)
+
+STEP 2 — VPS me login karo (SSH):
+
+    ssh root@884.55.55.66
+
+STEP 3 — Nginx install karo:
+
+    apt update && apt install -y nginx
+    mkdir -p /var/www/zentord
+    chown -R $USER:$USER /var/www/zentord
+
+STEP 4 — Apne LAPTOP se build upload karo:
+
+    rsync -avz --delete dist/  root@884.55.55.66:/var/www/zentord/
+
+  (Windows users: WinSCP ya FileZilla use kar sakte ho — dist/ ka content
+   /var/www/zentord/ me daal do)
+
+STEP 5 — Nginx config banao:
+
+    nano /etc/nginx/sites-available/zentord
+
+  Yeh paste karo:
+
+    server {
+      listen 80;
+      server_name call.yourcompany.com;
+      root /var/www/zentord;
+      index index.html;
+
+      # SPA fallback — har route index.html return karega (React Router)
+      location / {
+        try_files $uri $uri/ /index.html;
+      }
+
+      # Hashed assets ko 1 saal cache karo
+      location ~* \.(?:js|css|woff2?|svg|png|jpg|jpeg|webp|ico)$ {
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+      }
+
+      # index.html kabhi cache mat karo (taaki naya deploy turant dikhe)
+      location = /index.html {
+        add_header Cache-Control "no-cache, no-store, must-revalidate";
+      }
+
+      # Security headers
+      add_header X-Frame-Options "SAMEORIGIN";
+      add_header X-Content-Type-Options "nosniff";
+      add_header Referrer-Policy "strict-origin-when-cross-origin";
+      add_header Permissions-Policy "microphone=(self), camera=()";
+    }
+
+  Save (Ctrl+O, Enter, Ctrl+X).
+
+STEP 6 — Enable + reload:
+
+    ln -s /etc/nginx/sites-available/zentord /etc/nginx/sites-enabled/
+    nginx -t                 # syntax check
+    systemctl reload nginx
+
+STEP 7 — Browser me kholo:  http://call.yourcompany.com
+  (Abhi http hai — agle step me HTTPS lagayenge)
+
+================================================================================
+  4B. DOCKER / DOCKER COMPOSE
+================================================================================
+
+Repo root me  Dockerfile  banao:
+
+    FROM oven/bun:1.1 AS build
+    WORKDIR /app
+    COPY package.json bun.lockb* ./
+    RUN bun install --frozen-lockfile
+    COPY . .
+    RUN bun run build
+
+    FROM nginx:1.27-alpine
+    COPY --from=build /app/dist /usr/share/nginx/html
+    COPY deploy/nginx.conf /etc/nginx/conf.d/default.conf
+    EXPOSE 80
+
+deploy/nginx.conf  me wahi server-block daalo jo section 4A ke STEP 5 me hai.
+
+docker-compose.yml:
+
+    services:
+      web:
+        build: .
+        restart: unless-stopped
+        ports: ["80:80"]
+
+Run karo:
+
+    docker compose up -d --build
+
+Update karne ke liye:
+
+    git pull
+    docker compose up -d --build
+
+================================================================================
+  4C. cPanel / SHARED HOSTING (Hostinger, GoDaddy, Bluehost, etc.)
+================================================================================
+
+  1. Apne laptop pe:    bun run build
+  2. dist/  folder ke ANDAR ke saare files select karo (folder nahi, andar ka content)
+  3. cPanel -> File Manager -> public_html/ me upload karo
+  4. public_html/  me  .htaccess  file banao aur yeh paste karo:
+
+         <IfModule mod_rewrite.c>
+           RewriteEngine On
+           RewriteBase /
+           RewriteRule ^index\.html$ - [L]
+           RewriteCond %{REQUEST_FILENAME} !-f
+           RewriteCond %{REQUEST_FILENAME} !-d
+           RewriteRule . /index.html [L]
+         </IfModule>
+
+         <FilesMatch "index\.html$">
+           Header set Cache-Control "no-cache, no-store, must-revalidate"
+         </FilesMatch>
+
+  5. cPanel se SSL enable karo (AutoSSL / Let's Encrypt button — free)
+  6. Done. Browser me apna domain kholo.
+
+================================================================================
+  4D. VERCEL / NETLIFY / CLOUDFLARE PAGES  (Free, easiest)
+================================================================================
+
+VERCEL:
+  1. https://vercel.com -> Login with GitHub
+  2. Import repo -> Framework: "Vite" (auto-detect)
+  3. Build command:    bun run build
+  4. Output dir:       dist
+  5. Deploy -> done. Custom domain bhi free me add hota hai.
+
+NETLIFY:
+  1. https://app.netlify.com -> "Add new site" -> Import from GitHub
+  2. Build command:    bun run build
+  3. Publish dir:      dist
+  4. Add file  public/_redirects  with content:
+         /*    /index.html   200
+
+CLOUDFLARE PAGES:
+  1. https://pages.cloudflare.com -> Connect GitHub
+  2. Build command:    bun run build
+  3. Output:           dist
+  4. Deploy.
+
+(In sab pe HTTPS automatic milta hai — alag se certbot nahi chahiye.)
+
+================================================================================
+  5. DOMAIN CONNECT KARO
+================================================================================
+
+Apne domain provider (GoDaddy / Namecheap / Hostinger / Cloudflare) pe jao:
+
+  DNS Management -> Add Record:
+     Type:  A
+     Name:  call          (subdomain ke liye)  ya  @  (root domain ke liye)
+     Value: 884.55.55.66  (apna VPS IP)
+     TTL:   300
+
+  www version bhi add karo:
+     Type:  A     Name: www     Value: 884.55.55.66
+
+5-10 minute me DNS propagate ho jayega. Check karne ke liye:
+     https://dnschecker.org -> apna domain daalo
+
+================================================================================
+  6. HTTPS LAGAO  (Let's Encrypt — FREE, auto-renew)
+================================================================================
+
+VPS pe (root user):
+
+    apt install -y certbot python3-certbot-nginx
+    certbot --nginx -d call.yourcompany.com -d www.call.yourcompany.com
+    systemctl enable --now certbot.timer
+
+Done. 90 din me apne aap renew hoga.
+
+⚠️ ZARURI: HTTPS ke BINA browser microphone access NAHI dega.
+Iske bina calls kaam nahi karenge. Skip mat karna.
+
+================================================================================
+  7. FIREBASE GOOGLE LOGIN ENABLE KARO
+================================================================================
+
+  A. https://console.firebase.google.com pe project banao
+  B. Authentication -> Sign-in method -> Google -> Enable
+  C. Authentication -> Settings -> Authorized domains -> Add karo:
+        call.yourcompany.com
+        localhost
+        <aapka lovable.app preview URL>
+  D. Project Settings -> General -> Your apps -> Web app  ->  config copy karo:
+        projectId, apiKey, authDomain, appId
+  E. Apni site pe login karo as ADMIN -> Admin Panel -> Firebase tab
+     -> 4 values paste karo -> "Enable Google sign-in" toggle ON -> Save
+
+Bas. Redeploy nahi karna. Turant kaam karega.
+Kabhi bhi off karna ho — wahi toggle off kar do.
+
+================================================================================
+  8. ADMIN PANEL SE BRANDING CHANGE KARO
+================================================================================
+
+Admin login -> Admin Panel -> Brand tab. Yahaan se change kar sakte ho:
+
+  • Brand name           (header me dikhne wala naam)
+  • Logo upload          (PNG/SVG)
+  • Favicon              (browser tab icon)
+  • Primary color (HSL)  e.g. 220 90% 50%
+  • Accent color (HSL)
+  • Footer text
+  • Support email
+
+Save karne ke baad page reload karo — pure site pe naya branding apply ho jayega.
+Koi redeploy nahi.
+
+================================================================================
+  9. DOMAIN WHITELIST + APP KEYS
+================================================================================
+
+Har company apne dashboard se manage karti hai:
+
+  Company Dashboard -> Security tab
+
+  (a) DOMAIN WHITELIST  — websites ke liye:
+      Apne client ke domain add karo (e.g. clientcompany.com).
+      Sirf wahi domain (aur subdomains) widget chala paayenge.
+      Khaali list = sab allowed.
+
+  (b) APP KEYS — Android/iOS/desktop apps ke liye:
+      "Generate new key" -> zk_xxxxxxxx... key milegi.
+      App me request header me bhejo:
+            x-app-key: zk_xxxxxxxx
+      Tabhi domain check skip hoga (kyunki apps me Origin nahi hota).
+
+Detailed code samples ke liye dekho:  public/integration.txt
+Employee mobile app ke liye dekho:    public/employeeapp.txt
+
+================================================================================
+  10. NAYA UPDATE DEPLOY KARNE KA TARIKA
+================================================================================
+
+Jab bhi code change karo:
+
+  VPS users:
+      bun run build
+      rsync -avz --delete dist/ root@884.55.55.66:/var/www/zentord/
+      # Bas. index.html no-cache hai to users ko turant naya milega.
+
+  Docker users:
+      git pull && docker compose up -d --build
+
+  Vercel/Netlify/Cloudflare:
+      git push  →  auto deploy.
+
+  cPanel:
+      bun run build  →  public_html/ me re-upload karo.
+
+Edge functions (backend) Lovable se AUTOMATIC deploy hote hain — aapko
+kuch nahi karna.
+
+================================================================================
+  11. COMMON ERRORS AUR FIX
+================================================================================
+
+❌ "404 on page refresh"
+   → Nginx me  try_files $uri $uri/ /index.html;  missing hai. Section 4A STEP 5 dekho.
+   → cPanel pe .htaccess missing hai. Section 4C dekho.
+
+❌ "Microphone permission denied"
+   → HTTPS nahi laga. certbot run karo (Section 6).
+
+❌ "Google login button kaam nahi karta"
+   → Firebase Authorized domains me apna domain add karo (Section 7-C).
+   → Admin Panel -> Firebase tab me "Enable" toggle on hai check karo.
+
+❌ "Call connect nahi ho raha — 'Origin not allowed'"
+   → Company ke Security tab me domain whitelist me apna site domain add karo.
+
+❌ "Mixed content error" (browser console me)
+   → HTTPS site se HTTP resource load ho raha. Saari URLs https:// honi chahiye.
+
+❌ Audio choppy / one-way audio
+   → User strict NAFT/firewall ke peeche hai. TURN server lagao.
+     server.txt section 9 dekho (coturn setup).
+
+❌ Admin password bhul gaye
+   → server.txt section 12 dekho (3 recovery options).
+
+================================================================================
+  12. BACKUP & RECOVERY
+================================================================================
+
+Lovable Cloud daily Postgres backup leta hai automatically.
+
+Manual export:
+   Lovable -> Cloud -> Database -> Backups -> Download
+
+Important tables jo dhyaan rakhne wali hain:
+   companies, employees, calls, payments, subscriptions, plans,
+   brand_settings, firebase_settings, smtp_settings, razorpay_settings,
+   company_app_keys, company_domain_whitelist, user_roles, profiles
+
+Apni dist/  build ka backup bhi rakhna — pichli version pe wapas jaane ke liye.
+
+================================================================================
+  AAP READY HO! 🚀
+
+  Ab aapki Zentord site chal rahi hai:
+     https://call.yourcompany.com
+
+  Backend Lovable Cloud manage karta hai, frontend aapke server pe hai.
+  Branding, Firebase, plans, agents — sab admin panel se change ho jaayega
+  bina kisi redeploy ke.
+
+  Aur detail chahiye to:
+     server.txt        — Advanced VPS setup (TURN, PeerJS self-host)
+     production.txt    — Production change-log + security audit
+     test.txt          — Production QA checklist
+     integration.txt   — Website/app me widget embed karne ka guide
+     employeeapp.txt   — React Native employee app guide
+================================================================================

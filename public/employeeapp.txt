@@ -1,0 +1,314 @@
+================================================================================
+  ZENTORD — EMPLOYEE MOBILE APP GUIDE
+================================================================================
+
+This doc explains exactly how to build a NATIVE EMPLOYEE APP (React Native
+or Flutter) that:
+
+  • Logs an employee in with email + password
+  • Shows the live call queue (waiting / active calls)
+  • Receives push notifications when a new customer call arrives
+  • Lets the employee accept the call and join the WebRTC room
+
+Index:
+  1. Backend endpoints
+  2. Push notification setup (Firebase Cloud Messaging)
+  3. React Native sample app (full skeleton)
+  4. Joining the WebRTC call
+  5. Security & rotation
+
+================================================================================
+  1. BACKEND ENDPOINTS
+================================================================================
+
+Base URL:
+  https://fcdyoquezvbvrbplldrm.supabase.co/functions/v1
+
+────────────────────────────────────────────────────────────────────────────
+POST /employee-login                        (public)
+  Body:    { "email": "...", "password": "..." }
+  Resp:    { "access_token", "refresh_token", "expires_at",
+             "user": {...}, "employee": {...}, "company": {...} }
+  Errors:  401 invalid credentials · 403 not an active employee
+
+────────────────────────────────────────────────────────────────────────────
+GET  /employee-queue                        (Bearer access_token)
+  Headers: Authorization: Bearer <access_token>
+  Resp:    {
+             "employee_id": "<uuid>",
+             "calls": [
+               { "id", "room_id", "customer_name", "customer_issue",
+                 "language", "status", "started_at",
+                 "picked_at", "employee_id" }
+             ]
+           }
+  Status filter: returns only `waiting` + `active` calls.
+
+────────────────────────────────────────────────────────────────────────────
+POST /employee-fcm-register                 (Bearer access_token)
+  Body:    { "fcm_token": "<from FCM SDK>", "platform": "android"|"ios"|"web" }
+  Resp:    { "ok": true }
+  Call this on app launch and whenever FCM gives you a new token.
+
+────────────────────────────────────────────────────────────────────────────
+POST /notify-employees-on-call              (server-only — invoked by call-start)
+  You don't call this from the app. It runs automatically and pushes an
+  FCM message to every active employee device when a customer starts a call.
+  Notification payload:
+    {
+      "notification": { "title", "body" },
+      "data": {
+        "type":          "incoming_call",
+        "call_id":       "<uuid>",
+        "room_id":       "<short id>",
+        "customer_name": "...",
+        "language":      "..."
+      }
+    }
+
+────────────────────────────────────────────────────────────────────────────
+ACCEPTING / ENDING A CALL
+  Employees update the `calls` row directly via the Supabase JS SDK
+  (RLS already permits their company's calls):
+
+    await supabase.from('calls').update({
+      status: 'active',
+      employee_id: <employee_id_from_login_response>,
+      picked_at: new Date().toISOString(),
+    }).eq('id', call_id);
+
+  And to end:
+    await supabase.from('calls').update({
+      status: 'ended',
+      ended_at: new Date().toISOString(),
+      duration_seconds: <seconds>,
+    }).eq('id', call_id);
+
+================================================================================
+  2. PUSH NOTIFICATIONS — FIREBASE CLOUD MESSAGING
+================================================================================
+
+Server side (already done for you):
+  • Admin → Brand/Firebase tab in Lovable Cloud has FIREBASE_SERVICE_ACCOUNT_JSON
+    secret configured. The `notify-employees-on-call` edge function uses it
+    to call the FCMv1 API and dispatches push to every device row in the
+    `device_tokens` table belonging to the company.
+
+App side (you build):
+  1. Create a Firebase project (or reuse the existing one used for Google
+     sign-in). Add Android + iOS apps to it. Download:
+       • google-services.json  (Android)
+       • GoogleService-Info.plist (iOS)
+  2. Add @react-native-firebase/app + @react-native-firebase/messaging
+     (or firebase_messaging for Flutter).
+  3. Ask for notification permission, get the FCM token, post it to
+     /employee-fcm-register.
+  4. Handle background + foreground messages. When you receive a payload
+     where `data.type === 'incoming_call'`, show a full-screen ringer
+     (Callkeep on iOS, Notifee or callkit_incoming on Android).
+
+================================================================================
+  3. REACT NATIVE SAMPLE APP (full skeleton)
+================================================================================
+
+Project setup:
+  npx react-native@latest init ZentordEmployee
+  cd ZentordEmployee
+  npm i @react-native-firebase/app @react-native-firebase/messaging \
+        @react-native-async-storage/async-storage \
+        react-native-callkeep notifee/react-native
+
+────────────────────────────────────────────────────────────────────────────
+src/api.ts
+────────────────────────────────────────────────────────────────────────────
+
+  import AsyncStorage from '@react-native-async-storage/async-storage';
+
+  const BASE = 'https://fcdyoquezvbvrbplldrm.supabase.co/functions/v1';
+
+  async function authHeaders() {
+    const t = await AsyncStorage.getItem('access_token');
+    return { Authorization: `Bearer ${t ?? ''}` };
+  }
+
+  export async function login(email: string, password: string) {
+    const r = await fetch(`${BASE}/employee-login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password }),
+    });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || 'Login failed');
+    await AsyncStorage.multiSet([
+      ['access_token',  j.access_token],
+      ['refresh_token', j.refresh_token],
+      ['employee_id',   j.employee.id],
+      ['company_id',    j.employee.company_id],
+    ]);
+    return j;
+  }
+
+  export async function fetchQueue() {
+    const r = await fetch(`${BASE}/employee-queue`, {
+      headers: await authHeaders(),
+    });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || 'Queue failed');
+    return j.calls;
+  }
+
+  export async function registerFcm(fcm_token: string, platform: string) {
+    return fetch(`${BASE}/employee-fcm-register`, {
+      method: 'POST',
+      headers: { ...await authHeaders(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fcm_token, platform }),
+    });
+  }
+
+────────────────────────────────────────────────────────────────────────────
+App.tsx (entry)
+────────────────────────────────────────────────────────────────────────────
+
+  import React, { useEffect, useState } from 'react';
+  import { Platform, View, Text, Button, FlatList, TextInput } from 'react-native';
+  import messaging from '@react-native-firebase/messaging';
+  import notifee, { AndroidImportance } from '@notifee/react-native';
+  import AsyncStorage from '@react-native-async-storage/async-storage';
+  import { login, fetchQueue, registerFcm } from './src/api';
+
+  export default function App() {
+    const [authed, setAuthed]  = useState(false);
+    const [email, setEmail]    = useState('');
+    const [pass, setPass]      = useState('');
+    const [calls, setCalls]    = useState<any[]>([]);
+
+    useEffect(() => {
+      (async () => {
+        const t = await AsyncStorage.getItem('access_token');
+        if (t) { setAuthed(true); refresh(); }
+      })();
+    }, []);
+
+    async function refresh() {
+      try { setCalls(await fetchQueue()); } catch {}
+    }
+
+    async function setupPush() {
+      await messaging().requestPermission();
+      const token = await messaging().getToken();
+      await registerFcm(token, Platform.OS);
+      messaging().onTokenRefresh((t) => registerFcm(t, Platform.OS));
+
+      // Foreground display
+      await notifee.createChannel({
+        id: 'incoming_calls', name: 'Incoming calls',
+        importance: AndroidImportance.HIGH, sound: 'default',
+      });
+      messaging().onMessage(async (msg) => {
+        if (msg.data?.type === 'incoming_call') {
+          await notifee.displayNotification({
+            title: msg.notification?.title ?? 'Incoming call',
+            body:  msg.notification?.body  ?? '',
+            android: { channelId: 'incoming_calls', pressAction: { id: 'default' } },
+          });
+          refresh();
+        }
+      });
+    }
+
+    async function handleLogin() {
+      await login(email, pass);
+      setAuthed(true);
+      await setupPush();
+      refresh();
+    }
+
+    if (!authed) {
+      return (
+        <View style={{ padding: 24, gap: 12 }}>
+          <Text style={{ fontSize: 24, fontWeight: '700' }}>Zentord Employee</Text>
+          <TextInput placeholder="Email" autoCapitalize="none" value={email} onChangeText={setEmail}
+            style={{ borderWidth: 1, padding: 12, borderRadius: 8 }}/>
+          <TextInput placeholder="Password" secureTextEntry value={pass} onChangeText={setPass}
+            style={{ borderWidth: 1, padding: 12, borderRadius: 8 }}/>
+          <Button title="Sign in" onPress={handleLogin}/>
+        </View>
+      );
+    }
+
+    return (
+      <View style={{ padding: 16, flex: 1 }}>
+        <Text style={{ fontSize: 20, fontWeight: '700', marginBottom: 12 }}>
+          Live queue
+        </Text>
+        <Button title="Refresh" onPress={refresh}/>
+        <FlatList
+          data={calls}
+          keyExtractor={(it) => it.id}
+          renderItem={({ item }) => (
+            <View style={{ padding: 12, borderBottomWidth: 1, borderColor: '#eee' }}>
+              <Text style={{ fontWeight: '600' }}>
+                {item.customer_name ?? 'Anonymous'} · {item.status}
+              </Text>
+              <Text style={{ color: '#666' }}>{item.customer_issue ?? ''}</Text>
+              <Text style={{ fontSize: 11, color: '#999' }}>
+                {new Date(item.started_at).toLocaleTimeString()}
+              </Text>
+            </View>
+          )}
+        />
+      </View>
+    );
+  }
+
+────────────────────────────────────────────────────────────────────────────
+Background message handler — index.js
+────────────────────────────────────────────────────────────────────────────
+
+  import { AppRegistry } from 'react-native';
+  import messaging from '@react-native-firebase/messaging';
+  import App from './App';
+  import { name as appName } from './app.json';
+
+  messaging().setBackgroundMessageHandler(async (msg) => {
+    // Optional: trigger CallKeep/CallKit full-screen ring here.
+    console.log('BG message', msg);
+  });
+
+  AppRegistry.registerComponent(appName, () => App);
+
+================================================================================
+  4. JOINING THE WEBRTC CALL
+================================================================================
+
+The simplest path: open the existing /agent route inside a WebView so
+employees join the same WebRTC client the web app already uses.
+
+  import { WebView } from 'react-native-webview';
+  // pass the access_token via query string if your /agent route expects it
+  <WebView source={{ uri: `https://YOUR-DOMAIN/agent?call=${callId}` }}
+    allowsInlineMediaPlayback
+    mediaPlaybackRequiresUserAction={false}
+    onPermissionRequest={(e) => e.grant(['android.webkit.resource.AUDIO_CAPTURE'])}/>
+
+If you want a fully native WebRTC client, use react-native-webrtc and
+mirror the signalling pattern from src/lib/peer.ts in this repo.
+
+================================================================================
+  5. SECURITY & ROTATION
+================================================================================
+
+  • access_token from /employee-login is a standard Supabase JWT — store
+    it securely (Keychain / EncryptedSharedPreferences). It expires in 1h.
+  • Use the refresh_token to obtain a new access_token via the Supabase
+    JS SDK in your app: supabase.auth.setSession(...) then
+    supabase.auth.refreshSession().
+  • Device tokens auto-disable themselves on the server when FCM returns
+    400/404 (uninstalled app, expired token).
+  • If an employee leaves the company, set is_active=false on the
+    employees row from the dashboard — the next /employee-login will
+    return 403, and existing tokens become useless within 1h.
+
+================================================================================
+                          END OF EMPLOYEE APP GUIDE
+================================================================================

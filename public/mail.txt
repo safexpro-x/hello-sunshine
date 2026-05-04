@@ -1,0 +1,142 @@
+================================================================
+  ZENTORD — EMAIL / SMTP SETUP GUIDE (custom domain)
+================================================================
+
+This file explains EXACTLY how to make all system emails (account
+verification, password reset, approval, plan purchase, plan expiry
+reminder, plan expired) go from YOUR OWN DOMAIN — not from Lovable
+or Supabase's default sender.
+
+================================================================
+1. TWO PLACES THAT SEND EMAIL
+================================================================
+
+A) APP EMAILS (the ones we control fully)
+   - Sent by edge function `process-email-outbox` every 1 minute.
+   - Uses the SMTP credentials you save in:
+       Admin Panel  →  SMTP tab
+   - Templates: account approval, plan purchased, plan expiring,
+     plan expired, password reset, account verification.
+   - Stored in DB table `email_outbox` until delivered.
+
+B) SUPABASE AUTH EMAILS (only used as a SAFETY FALLBACK)
+   - Sent by Supabase's built-in mailer for `auth.signUp`,
+     password recovery, magic links, etc.
+   - Configure under:
+       Lovable Cloud → Users → Auth Settings → SMTP
+
+   Zentord disables most of these by using its own custom flow
+   (signup-request + verify-email functions). The fallback only
+   matters if you ever turn off the custom flow.
+
+
+================================================================
+2. CONFIGURE YOUR DOMAIN (one-time DNS setup)
+================================================================
+
+You need 3 DNS records on your domain registrar (GoDaddy / Cloudflare
+/ Namecheap / Route53 — wherever you bought the domain):
+
+   ┌─────────────┬────────────────────────────────────────────────┐
+   │ TYPE        │ VALUE                                          │
+   ├─────────────┼────────────────────────────────────────────────┤
+   │ MX          │ → handled by your email provider (Workspace,   │
+   │             │   Zoho, Brevo, Mailgun, etc.)                  │
+   │ TXT (SPF)   │ v=spf1 include:<provider> ~all                 │
+   │ TXT (DKIM)  │ provider gives you a long key                  │
+   │ TXT (DMARC) │ v=DMARC1; p=quarantine; rua=mailto:you@dom.com │
+   └─────────────┴────────────────────────────────────────────────┘
+
+Without SPF + DKIM your emails go to SPAM.
+
+
+================================================================
+3. PICK A TRANSACTIONAL EMAIL PROVIDER
+================================================================
+
+Any SMTP service works. Recommended (cheap / free tier):
+
+   • Brevo (sendinblue.com)   — 300 free/day,  Host: smtp-relay.brevo.com   Port 587
+   • Mailgun                   — 5000 free/mo, Host: smtp.mailgun.org        Port 587
+   • SendGrid                  — 100 free/day, Host: smtp.sendgrid.net       Port 587
+   • Amazon SES                — $0.10 / 1000, Host: email-smtp.<region>.amazonaws.com Port 587
+   • Zoho Mail                 — paid,        Host: smtp.zoho.com            Port 587/465
+
+Inside the provider:
+  1. Verify your domain (paste the SPF / DKIM TXT records above).
+  2. Create an SMTP user/password (sometimes called "API SMTP key").
+
+
+================================================================
+4. ENTER THE CREDENTIALS IN ZENTORD ADMIN PANEL
+================================================================
+
+Open Admin → SMTP tab and fill:
+
+   SMTP Host       :  smtp.yourprovider.com
+   Port            :  587   (or 465 for SSL)
+   Username        :  <provider login>
+   Password        :  <provider SMTP password / API key>
+   From email      :  noreply@yourdomain.com    ← MUST be on a domain you verified
+   From name       :  Zentord  (or your brand name)
+
+Toggle ONE of these:
+   • Use STARTTLS  → ON for port 587 / 2525   (most common)
+   • Use SSL/TLS   → ON for port 465 only
+
+Click "Save SMTP settings".
+
+Within 60 seconds the next pending email in the outbox will go from
+your domain. Check Admin → Companies → email_outbox if anything fails.
+
+
+================================================================
+5. TEMPLATES — WHO SENDS WHAT
+================================================================
+
+   EVENT                             FROM EDGE FUNCTION
+   ────────────────────────────────  ─────────────────────────────
+   Account verification link         signup-request
+   Password reset                    password-reset-request
+   Company approved                  trigger grant_free_trial_on_approval
+   Plan purchased                    razorpay-verify-payment
+   Plan expiring (3 days warn)       plan-expiry-check
+   Plan expired                      plan-expiry-check
+
+All of them push a row into `email_outbox`, which the
+`process-email-outbox` cron drains every minute using YOUR SMTP.
+
+
+================================================================
+6. FALLBACK BEHAVIOUR (when admin SMTP empty)
+================================================================
+
+If the SMTP host or "From email" is blank in the admin panel:
+   • The outbox worker logs a warning and SKIPS (does not error).
+   • Auth emails (signup verify, password reset) automatically
+     fall back to Supabase's built-in mailer — but the sender will
+     show as the default Supabase address. Recommended only for
+     local dev / testing.
+
+To re-enable: just fill the SMTP form and save.
+
+
+================================================================
+7. LOCALHOST → CUSTOM DOMAIN MIGRATION CHECKLIST
+================================================================
+
+When moving from `localhost:5173` → `https://app.yourdomain.com`:
+
+   ☐ Add the custom domain in Lovable Cloud → Domains.
+   ☐ Update Supabase Auth → URL Configuration:
+       Site URL          : https://app.yourdomain.com
+       Redirect URLs     : https://app.yourdomain.com/*
+   ☐ Update Firebase Console → Auth → Authorized domains:
+       add app.yourdomain.com
+   ☐ Save SMTP credentials (section 4).
+   ☐ Re-test:
+       1) Sign up a new test user → check verification mail arrives.
+       2) Click forgot-password → check reset mail arrives.
+       3) Buy a plan in TEST mode → check purchase mail arrives.
+
+That is it. Production-ready email is now live on your domain.

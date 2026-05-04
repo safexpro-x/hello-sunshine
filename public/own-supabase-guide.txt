@@ -1,0 +1,474 @@
+================================================================================
+  ZENTORD — APNA KHUD KA SUPABASE PROJECT USE KARNE KI COMPLETE HINDI GUIDE
+================================================================================
+
+Yeh guide batati hai ki Lovable Cloud (managed Supabase) ke bajaye aap apna
+KHUD ka Supabase project kaise use karenge — database, auth, edge functions,
+storage sab apne control me. Iske baad admin account bhi khud create karenge.
+
+⚠️ ZARURI BAAT — PEHLE PADHO:
+   • Lovable Cloud already is project me enabled hai. Agar aap apna Supabase
+     use karna chahte ho to yeh ek "migration" hai — Cloud disable nahi hota,
+     lekin aap apne Supabase ke URL/keys point kar sakte ho.
+   • Saara DATA (companies, employees, calls, plans, payments) DOBARA setup
+     karna padega aapke naye Supabase me. Purana data automatic transfer NAHI hota.
+   • Edge functions (40+) aapko khud deploy karne padenge Supabase CLI se.
+
+--------------------------------------------------------------------------------
+  INDEX
+--------------------------------------------------------------------------------
+   1. Apna Supabase project banao
+   2. Database schema setup (saari tables + RLS + functions)
+   3. Storage buckets setup
+   4. Secrets configure karo
+   5. Edge functions deploy karo (Supabase CLI)
+   6. Frontend ko apne Supabase pe point karo (.env)
+   7. Auth providers configure karo (Email + Google)
+   8. ADMIN ACCOUNT CREATE KARNE KE 3 TARIKE
+   9. SMTP / Razorpay / Firebase admin panel se set karo
+  10. Verify karo — sab kaam kar raha hai
+  11. Common errors aur fix
+  12. Lovable Cloud vs Apna Supabase — comparison
+
+================================================================================
+  1. APNA SUPABASE PROJECT BANAO
+================================================================================
+
+  A. https://supabase.com pe jao -> Sign up (free tier kaafi hai start ke liye)
+  B. "New project" click karo:
+       - Name:        zentord-prod  (jo bhi naam pasand ho)
+       - Database password:  STRONG password rakho — yaad rakhna!
+       - Region:      apne users ke nazdeek (India ke liye: ap-south-1 Mumbai)
+       - Pricing:     Free se start karo, baad me Pro ($25/mo) upgrade kar lena
+  C. Project banne me 2-3 minute lagenge.
+  D. Project ready hone ke baad in 4 cheezo ko note karo:
+
+     Settings -> API:
+        Project URL:           https://xxxxxxxx.supabase.co
+        anon public key:       eyJhbGc...   (publishable, frontend me jayegi)
+        service_role key:      eyJhbGc...   ⚠️ SECRET — sirf backend me!
+
+     Settings -> Database:
+        Connection string:     postgresql://postgres:[PASSWORD]@db.xxx.supabase.co:5432/postgres
+
+================================================================================
+  2. DATABASE SCHEMA SETUP
+================================================================================
+
+Aapko saari tables, RLS policies, triggers, aur functions apne naye Supabase
+me banane padenge. Iske 2 tarike hain:
+
+OPTION A — Lovable se SQL nikal ke run karo (RECOMMENDED)
+----------------------------------------------------------
+  1. Lovable editor me  supabase/migrations/  folder kholo
+  2. Saari .sql files ko DATE ORDER me sort karo (purani se nayi)
+  3. Apne Supabase dashboard me jao -> SQL Editor -> "New query"
+  4. Har migration file ka content paste karo, "Run" click karo
+  5. Order ZARURI hai — purani migration pehle, nayi baad me
+
+  Quick way (bulk):
+     a. Local me clone karo:  git clone <your-repo>
+     b. Terminal me:
+            cat supabase/migrations/*.sql > /tmp/all_migrations.sql
+        (ya Windows pe: type supabase\migrations\*.sql > C:\temp\all.sql)
+     c. /tmp/all_migrations.sql ka content Supabase SQL Editor me paste -> Run
+
+OPTION B — Supabase CLI se push karo (advanced users)
+------------------------------------------------------
+  1. Install:    npm install -g supabase
+  2. Login:      supabase login
+  3. Link:       supabase link --project-ref xxxxxxxx
+  4. Push:       supabase db push
+
+Verify karo:  Supabase dashboard -> Table Editor me yeh tables dikhne chahiye:
+  ✓ companies, employees, calls, plans, subscriptions, payments
+  ✓ profiles, user_roles, brand_settings, firebase_settings
+  ✓ smtp_settings, razorpay_settings, site_content
+  ✓ company_app_keys, company_domain_whitelist, company_ip_whitelist
+  ✓ widget_slugs, email_outbox, email_verifications
+
+================================================================================
+  3. STORAGE BUCKETS SETUP
+================================================================================
+
+Supabase dashboard -> Storage -> "New bucket":
+
+  Bucket name:  branding
+  Public:       ✅ YES (logo/favicon publicly accessible hone chahiye)
+
+Storage policies (SQL Editor me run karo):
+
+    CREATE POLICY "Public read branding"
+      ON storage.objects FOR SELECT
+      USING (bucket_id = 'branding');
+
+    CREATE POLICY "Admins upload branding"
+      ON storage.objects FOR INSERT
+      WITH CHECK (
+        bucket_id = 'branding'
+        AND public.has_role(auth.uid(), 'admin')
+      );
+
+    CREATE POLICY "Admins update branding"
+      ON storage.objects FOR UPDATE
+      USING (bucket_id = 'branding' AND public.has_role(auth.uid(), 'admin'));
+
+    CREATE POLICY "Admins delete branding"
+      ON storage.objects FOR DELETE
+      USING (bucket_id = 'branding' AND public.has_role(auth.uid(), 'admin'));
+
+================================================================================
+  4. SECRETS CONFIGURE KARO
+================================================================================
+
+Supabase dashboard -> Project Settings -> Edge Functions -> "Secrets":
+
+REQUIRED secrets (in ke bina edge functions kaam nahi karenge):
+
+    SUPABASE_URL                = https://xxxxxxxx.supabase.co
+    SUPABASE_ANON_KEY           = eyJhbGc...   (anon public)
+    SUPABASE_SERVICE_ROLE_KEY   = eyJhbGc...   (service_role — secret!)
+    SUPABASE_DB_URL             = postgresql://postgres:[PASS]@db.xxx.supabase.co:5432/postgres
+
+OPTIONAL (in ke bina related features kaam nahi karenge):
+
+    LOVABLE_API_KEY             = (AI features ke liye — Lovable se lo)
+    FIREBASE_PROJECT_ID         = (Google login ke liye)
+    FIREBASE_AUTH_DOMAIN        = xxxxx.firebaseapp.com
+    FIREBASE_APP_ID             = 1:xxx:web:xxx
+    FIREBASE_WEB_API_KEY        = AIzaSy...
+    FIREBASE_SERVICE_ACCOUNT_JSON = {...}   (firebase-admin SDK ke liye)
+
+NOTE: SUPABASE_URL aur SUPABASE_ANON_KEY auto-set hote hain Supabase me, lekin
+phir bhi verify kar lo.
+
+================================================================================
+  5. EDGE FUNCTIONS DEPLOY KARO
+================================================================================
+
+Frontend Lovable se direct kaam karega, lekin edge functions (backend logic)
+aapko apne Supabase pe khud deploy karni padengi.
+
+STEP 1 — Supabase CLI install:
+    npm install -g supabase
+    supabase --version    # verify
+
+STEP 2 — Login:
+    supabase login        # browser khulega, authorize karo
+
+STEP 3 — Apna project link karo:
+    cd zentord                                    # repo root
+    supabase link --project-ref xxxxxxxx          # apna project ref daalo
+
+STEP 4 — Saari functions ek saath deploy karo:
+    supabase functions deploy --no-verify-jwt
+
+  Ya ek-ek karke (recommended for first time):
+    supabase functions deploy signup-request --no-verify-jwt
+    supabase functions deploy verify-email --no-verify-jwt
+    supabase functions deploy widget-bootstrap --no-verify-jwt
+    supabase functions deploy call-start --no-verify-jwt
+    supabase functions deploy employee-login --no-verify-jwt
+    supabase functions deploy employee-queue --no-verify-jwt
+    supabase functions deploy employee-fcm-register --no-verify-jwt
+    supabase functions deploy notify-employees-on-call --no-verify-jwt
+    supabase functions deploy ai-assistant --no-verify-jwt
+    supabase functions deploy firebase-bridge --no-verify-jwt
+    supabase functions deploy firebase-public-config --no-verify-jwt
+    supabase functions deploy password-reset-request --no-verify-jwt
+    supabase functions deploy password-reset-confirm --no-verify-jwt
+    supabase functions deploy process-email-outbox --no-verify-jwt
+    supabase functions deploy plan-expiry-check
+    supabase functions deploy razorpay-create-order
+    supabase functions deploy razorpay-verify-payment
+    supabase functions deploy admin-update-self
+
+NOTE: supabase/config.toml me jin functions ke liye  verify_jwt = false  hai,
+unko  --no-verify-jwt  flag se deploy karo. Baki ke liye flag mat lagao.
+
+STEP 5 — Cron job schedule karo (email outbox + plan expiry):
+
+Supabase dashboard -> Database -> Extensions -> enable karo:
+    ✓ pg_cron
+    ✓ pg_net
+
+Phir SQL Editor me run karo:
+
+    SELECT cron.schedule(
+      'process-email-outbox',
+      '* * * * *',   -- har minute
+      $$
+      SELECT net.http_post(
+        url := 'https://xxxxxxxx.supabase.co/functions/v1/process-email-outbox',
+        headers := '{"Content-Type":"application/json","Authorization":"Bearer YOUR_SERVICE_ROLE_KEY"}'::jsonb
+      );
+      $$
+    );
+
+    SELECT cron.schedule(
+      'plan-expiry-check',
+      '0 */6 * * *',  -- har 6 ghante
+      $$
+      SELECT net.http_post(
+        url := 'https://xxxxxxxx.supabase.co/functions/v1/plan-expiry-check',
+        headers := '{"Content-Type":"application/json","Authorization":"Bearer YOUR_SERVICE_ROLE_KEY"}'::jsonb
+      );
+      $$
+    );
+
+  (xxxxxxxx aur YOUR_SERVICE_ROLE_KEY apne values se replace karo)
+
+================================================================================
+  6. FRONTEND KO APNE SUPABASE PE POINT KARO
+================================================================================
+
+⚠️ Lovable me  .env  file auto-managed hai — usko EDIT NAHI kar sakte direct.
+Iske 2 tarike hain:
+
+OPTION A — Lovable se export karke local/own-hosting pe chalao (RECOMMENDED)
+----------------------------------------------------------------------------
+  1. Lovable -> GitHub -> Connect -> repo create karo
+  2. Local me clone karo:  git clone <repo-url> && cd zentord
+  3. Root me  .env  file banao (replace karo Lovable wali file ko):
+
+       VITE_SUPABASE_URL="https://xxxxxxxx.supabase.co"
+       VITE_SUPABASE_PUBLISHABLE_KEY="eyJhbGc...your-anon-key..."
+       VITE_SUPABASE_PROJECT_ID="xxxxxxxx"
+
+  4. Build karo:
+       bun install
+       bun run build
+
+  5. dist/ folder apne hosting pe upload karo (guide.txt dekho)
+
+OPTION B — Lovable Cloud disable + apna Supabase connect (limited support)
+---------------------------------------------------------------------------
+  Lovable me Cloud disable karna ek baar ka decision hai. Iske badle:
+  - Connectors -> Supabase -> "Connect external Supabase project"
+  - Apne project ke credentials daalo
+
+  ⚠️ Caveat: Lovable ki kuch managed features (auto-types, auto-deploy of
+  edge functions) tab Lovable Cloud wali hi rahegi. Pure control ke liye
+  Option A behtar hai.
+
+================================================================================
+  7. AUTH PROVIDERS CONFIGURE KARO
+================================================================================
+
+Supabase dashboard -> Authentication -> Providers:
+
+EMAIL:
+  ✓ Enable Email provider
+  ✗ "Confirm email" — DISABLE karo (hum custom verification flow use kar rahe hain)
+  ✓ "Secure password change" — enable
+  ✓ "Leaked password protection (HIBP)" — enable
+
+GOOGLE (optional, agar Firebase use nahi kar rahe):
+  ✓ Enable Google provider
+  - Client ID + Client Secret Google Cloud Console se lo
+  - Authorized redirect URI: https://xxxxxxxx.supabase.co/auth/v1/callback
+
+URL Configuration:
+  Site URL:       https://yourdomain.com   (apna live domain)
+  Redirect URLs:  https://yourdomain.com/**
+                  http://localhost:5173/**   (local dev ke liye)
+
+================================================================================
+  8. ADMIN ACCOUNT CREATE KARNE KE 3 TARIKE
+================================================================================
+
+Yeh sabse important step hai. Admin ke bina aap kuch configure nahi kar paayenge.
+
+═══════════════════════════════════════════════════════════════════════════════
+  TARIKA 1 — Auto-admin trigger (SABSE EASY) ⭐ RECOMMENDED
+═══════════════════════════════════════════════════════════════════════════════
+
+Code me already ek trigger hai jo  admin@gmail.com  email se signup karne par
+automatic admin role assign kar deta hai. Steps:
+
+  1. Apni site kholo:    https://yourdomain.com/auth
+  2. "Sign up" tab pe jao
+  3. Yeh details daalo:
+        Name:      Admin
+        Email:     admin@gmail.com    ⬅️ EXACTLY yeh email
+        Phone:     +91XXXXXXXXXX
+        Password:  StrongPassword@123
+  4. "Sign up" click karo
+  5. Mail aayega (agar SMTP set hai) — verify link click karo
+     Agar SMTP nahi set hai abhi, to step 5 skip karne ke liye:
+        Supabase dashboard -> Authentication -> Users -> apna user dhundo
+        -> "..." menu -> "Confirm email"
+  6. Login karo with admin@gmail.com
+  7. /admin pe jao — admin panel khul jayega ✅
+
+Agar dusri email use karni hai to TARIKA 2 dekho.
+
+═══════════════════════════════════════════════════════════════════════════════
+  TARIKA 2 — Manual SQL se kisi bhi user ko admin banao
+═══════════════════════════════════════════════════════════════════════════════
+
+  1. Pehle normal signup karo apni desired email se (e.g. owner@yourcompany.com)
+  2. Email verify karo (mail link ya Supabase dashboard se confirm)
+  3. Supabase dashboard -> SQL Editor -> "New query":
+
+        -- Apni user ID dhundo
+        SELECT id, email FROM auth.users WHERE email = 'owner@yourcompany.com';
+
+        -- Phir admin role assign karo (upar wali ID copy karke):
+        INSERT INTO public.user_roles (user_id, role)
+        VALUES ('PASTE-USER-ID-HERE', 'admin')
+        ON CONFLICT DO NOTHING;
+
+  4. Logout karke wapas login karo — ab admin role active hai
+  5. /admin pe jao
+
+═══════════════════════════════════════════════════════════════════════════════
+  TARIKA 3 — Supabase dashboard se directly user create + admin
+═══════════════════════════════════════════════════════════════════════════════
+
+  1. Supabase dashboard -> Authentication -> Users -> "Add user" -> "Create new user"
+        Email:           admin@yourcompany.com
+        Password:        StrongPassword@123
+        Auto-confirm:    ✅ YES
+  2. User create hone ke baad uski ID copy karo
+  3. SQL Editor me run karo:
+
+        INSERT INTO public.user_roles (user_id, role)
+        VALUES ('PASTE-USER-ID-HERE', 'admin');
+
+        -- Profile bhi banao (agar trigger se nahi bana)
+        INSERT INTO public.profiles (user_id, email, display_name, email_verified_at)
+        VALUES ('PASTE-USER-ID-HERE', 'admin@yourcompany.com', 'Admin', now())
+        ON CONFLICT (user_id) DO NOTHING;
+
+  4. Site pe login karo, /admin kholo ✅
+
+⚠️ SECURITY: Admin password STRONG rakhna. Admin panel me step-up password
+re-confirmation laga hua hai, lekin pehla password leak hua to game over.
+Ho sake to alag email use karo (admin@gmail.com common hai — guess hota hai).
+
+================================================================================
+  9. SMTP / RAZORPAY / FIREBASE — ADMIN PANEL SE SET KARO
+================================================================================
+
+Login as admin -> /admin -> tabs:
+
+  📧 SMTP tab:
+     - Host:        smtp.yourprovider.com  (e.g. smtp.gmail.com, smtp.zoho.com)
+     - Port:        587 (STARTTLS) ya 465 (SSL/TLS)
+     - Username:    aapka SMTP user
+     - Password:    SMTP password / app password
+     - From email:  noreply@yourcompany.com
+     - Use SSL:     toggle (465 ke liye ON, 587 ke liye OFF)
+     - Save -> "Send test email" se verify karo
+
+  💳 Razorpay tab (paid plans ke liye):
+     - Key ID:      rzp_live_xxx (ya rzp_test_xxx)
+     - Key Secret:  xxxxxxxxxx
+     - Webhook URL: https://xxxxxxxx.supabase.co/functions/v1/razorpay-verify-payment
+
+  🔥 Firebase tab (Google login ke liye):
+     - 4 values daalo (apiKey, authDomain, projectId, appId)
+     - "Enable Google sign-in" toggle ON
+     - guide.txt section 7 dekho complete steps ke liye
+
+  🎨 Brand tab:    logo, name, colors, footer
+  📝 Content tab:  Privacy, Terms, Contact, Landing page headlines
+  📦 Plans tab:    plan prices, quotas edit karo
+
+================================================================================
+  10. VERIFY KARO — SAB KAAM KAR RAHA HAI
+================================================================================
+
+Checklist (har point pe ✅ lagao):
+
+  ☐ Site khulti hai apne domain pe
+  ☐ /auth pe signup form dikhta hai (name, email, phone, password)
+  ☐ Signup karne par "Check your mail" message
+  ☐ Verification email aata hai (SMTP working)
+  ☐ Verify link click karne par account active
+  ☐ Login successful
+  ☐ Admin login + /admin khulta hai with password gate
+  ☐ Admin panel me saare tabs dikhte hain (SMTP, Plans, Brand, etc.)
+  ☐ Company signup flow chalta hai
+  ☐ Razorpay payment test (test mode) successful
+  ☐ Free trial 1 din ka mil raha hai approval ke baad
+  ☐ Email outbox process ho raha hai (cron job)
+  ☐ Edge functions logs me errors nahi:
+       Supabase dashboard -> Edge Functions -> logs
+
+================================================================================
+  11. COMMON ERRORS AUR FIX
+================================================================================
+
+❌ "Failed to fetch" / CORS errors
+   → Edge function deploy nahi hui. Section 5 se redeploy karo.
+
+❌ "permission denied for table xxx"
+   → RLS policy missing. Migration dobara run karo (Section 2).
+
+❌ Signup karne par mail nahi aa raha
+   → SMTP settings galat hain. Admin panel me test karo.
+   → Cron job nahi chal raha. Section 5 step 5 dekho.
+
+❌ "Not an active employee" error
+   → User_roles table me entry missing. SQL se add karo:
+        INSERT INTO public.user_roles (user_id, role)
+        VALUES ('user-id', 'employee');
+
+❌ Admin panel khulta nahi
+   → user_roles me 'admin' role missing. TARIKA 2 ya 3 use karo.
+
+❌ "Cannot find module" type errors frontend pe
+   → bun install dobara chalao, phir bun run build.
+
+❌ Edge function "secret not found"
+   → Section 4 ke saare required secrets set karo.
+
+❌ Google login kaam nahi karta
+   → Firebase authorized domains me apna domain add karo.
+   → Admin panel -> Firebase tab -> "Enable" toggle ON karo.
+
+================================================================================
+  12. LOVABLE CLOUD vs APNA SUPABASE — KYA CHOOSE KARU?
+================================================================================
+
+╔══════════════════════════╦══════════════════════╦═══════════════════════════╗
+║ Feature                  ║ Lovable Cloud        ║ Apna Supabase             ║
+╠══════════════════════════╬══════════════════════╬═══════════════════════════╣
+║ Setup time               ║ 0 min (auto)         ║ 2-4 ghante                ║
+║ Database                 ║ Auto-managed         ║ Aap manage karo           ║
+║ Edge function deploy     ║ Auto on save         ║ supabase CLI se manual    ║
+║ Migrations               ║ Lovable handle karta ║ SQL khud run karo         ║
+║ Types (TypeScript)       ║ Auto-generated       ║ Khud generate karna       ║
+║ Backups                  ║ Daily auto           ║ Khud schedule karo        ║
+║ Cost (small scale)       ║ Free tier            ║ Free tier (Supabase)      ║
+║ Cost (production)        ║ Usage-based          ║ $25/mo Pro plan           ║
+║ Full control             ║ ❌ Limited           ║ ✅ 100% control           ║
+║ Vendor lock-in           ║ Medium               ║ Low (open Postgres)       ║
+║ Direct DB SQL access     ║ Lovable UI se        ║ ✅ Direct connection       ║
+║ Custom extensions        ║ Limited              ║ ✅ Sab support            ║
+║ Multi-environment        ║ ❌                   ║ ✅ (dev/staging/prod)     ║
+╚══════════════════════════╩══════════════════════╩═══════════════════════════╝
+
+RECOMMENDATION:
+  • Prototype / MVP / small client base   → Lovable Cloud (rakhao as is)
+  • Production / 1000+ users / compliance → Apna Supabase (migrate)
+  • Multi-region / enterprise              → Apna Supabase + self-hosted option
+
+================================================================================
+  AAP READY HO! 🚀
+
+  Apna Supabase project chal raha hai, admin account ban gaya, edge functions
+  deployed, SMTP/Razorpay/Firebase admin panel se configure ho gaye.
+
+  Agar koi error aaye to Section 11 dekho ya Supabase logs check karo:
+      Supabase dashboard -> Logs -> Edge Functions / Postgres / Auth
+
+  Related guides:
+      guide.txt          — Hosting setup (VPS, Docker, cPanel, Vercel)
+      server.txt         — Advanced VPS (TURN server, PeerJS self-host)
+      production.txt     — Production change-log + security audit
+      integration.txt    — Widget embed in client websites
+      employeeapp.txt    — Employee mobile app guide
+================================================================================

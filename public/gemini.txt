@@ -1,0 +1,167 @@
+================================================================================
+ZENTORD — GEMINI VOICE AI SETUP GUIDE
+================================================================================
+
+The on-call hold assistant ("Zentord") talks to your customers in real time
+using Google Gemini. This file explains EXACTLY how to set up, change, and
+troubleshoot the Gemini API key.
+
+────────────────────────────────────────────────────────────────────────────────
+1. GET A GEMINI API KEY (FREE TIER AVAILABLE)
+────────────────────────────────────────────────────────────────────────────────
+
+  1. Open: https://aistudio.google.com/apikey
+  2. Sign in with your Google account.
+  3. Click "Create API key" → choose any Google Cloud project (or create new).
+  4. Copy the key. It looks like:  AIzaSy...xxxxxxxxxxxxxxxxxxxxxxxxxxxx
+  5. Keep it private — anyone with this key can spend your quota.
+
+The free tier of Gemini 2.0 Flash gives you a high request-per-minute quota
+which is more than enough for normal voice-hold traffic.
+
+────────────────────────────────────────────────────────────────────────────────
+2. SAVE THE KEY IN YOUR ADMIN PANEL  (recommended — change anytime, no redeploy)
+────────────────────────────────────────────────────────────────────────────────
+
+  1. Sign in as the platform admin.
+  2. Open  Admin Panel  →  tab  "Gemini AI".
+  3. Paste the key into "Gemini API Key" and click "Save Gemini settings".
+  4. (Optional) Tweak models:
+        • Reply model       →  gemini-2.0-flash         (fast voice replies)
+        • Extraction model  →  gemini-2.0-flash-lite    (cheap structured)
+  5. (Optional) Toggle "Fallback to environment key" OFF if you want to FORCE
+     the DB key to be the only one used. Leave ON for redundancy.
+
+The voice hold-assistant picks up the new key on the very next call — no
+deploy, no restart needed.
+
+────────────────────────────────────────────────────────────────────────────────
+3. (ALTERNATIVE) SAVE THE KEY AS AN ENVIRONMENT SECRET
+────────────────────────────────────────────────────────────────────────────────
+
+If you would rather not store the key in the database, you can store it as a
+backend secret instead.
+
+  1. Open the platform owner's project Cloud settings.
+  2. Add a secret named  GEMINI_API_KEY  with your AIza... key as the value.
+  3. In Admin Panel → Gemini AI tab, leave the API key field empty AND keep
+     "Fallback to environment key" ON.
+
+The edge function will use the env key whenever the DB field is empty.
+
+────────────────────────────────────────────────────────────────────────────────
+4. HOW THE VOICE FLOW WORKS  (so you can debug)
+────────────────────────────────────────────────────────────────────────────────
+
+Customer opens widget link → picks language → taps "Start call"
+   ↓
+The browser starts the microphone and immediately plays Zentord's greeting
+(text-to-speech, in the chosen language).
+   ↓
+Browser SpeechRecognition listens → transcribes what the customer says.
+   ↓
+Frontend POSTs the conversation to edge function `ai-assistant`.
+   ↓
+`ai-assistant` loads the Gemini API key from `gemini_settings` (DB) — or
+from `GEMINI_API_KEY` env var if DB key is empty and fallback is ON.
+   ↓
+Gemini replies in 1-2 short sentences, locked to the company description and
+the customer's language.
+   ↓
+Browser TTS speaks the reply.  Recognition restarts.
+   ↓
+The loop continues until a human agent picks up the call (or customer hangs up).
+
+────────────────────────────────────────────────────────────────────────────────
+5. SUPPORTED MODELS
+────────────────────────────────────────────────────────────────────────────────
+
+For the REPLY model (used during the voice loop) — pick ONE:
+   • gemini-2.0-flash          (recommended — fastest, accurate, low cost)
+   • gemini-2.0-flash-lite     (cheaper, slightly less nuance)
+   • gemini-1.5-flash          (fallback, older but stable)
+   • gemini-1.5-pro            (highest quality, slower & more expensive)
+
+For the EXTRACTION model (pulls name/email/phone/issue from transcript):
+   • gemini-2.0-flash-lite     (recommended — cheap structured JSON)
+   • gemini-2.0-flash
+   • gemini-1.5-flash
+
+You can change these at any time from Admin Panel → Gemini AI.
+
+────────────────────────────────────────────────────────────────────────────────
+6. TROUBLESHOOTING
+────────────────────────────────────────────────────────────────────────────────
+
+❶ "AI doesn't speak at all"
+    • Make sure the user is on Chrome, Edge, or Android Chrome (Web Speech API).
+    • Safari/iOS: TTS works only AFTER a real user tap — our widget warms up
+      TTS on the "Continue" / "Start call" buttons. If voices still don't
+      load, refresh and try again.
+    • Check the browser console for `speech-not-supported`.
+
+❷ "AI speaks the greeting but never replies"
+    • Open Admin Panel → Gemini AI and confirm the API key is saved.
+    • Check the edge-function logs of `ai-assistant` for "Gemini 401" or
+      "API key not valid". Generate a new key in AI Studio and paste again.
+
+❸ "Replies are slow / choppy"
+    • Switch the reply model to `gemini-2.0-flash` (fastest).
+    • Make sure your customer has decent network — voice loop needs ~150ms
+      latency for smooth back-and-forth.
+
+❹ "Recognition stops after one sentence"
+    • This is fixed by the new code — recognition auto-restarts on every
+      turn. If it still happens, check that microphone permission is set to
+      "Allow" (not "Ask every time") in browser site settings.
+
+❺ "AI talks about other topics"
+    • Update the company's Business Description in Admin Panel → Companies.
+      The system prompt is locked strictly to that description; vague
+      descriptions => vague replies.
+
+❻ "I want to rotate the key"
+    • Just paste the new key over the old one in Admin Panel → Gemini AI →
+      Save. Effective on the very next call.  No deploy required.
+
+────────────────────────────────────────────────────────────────────────────────
+7. WHAT EACH FIELD DOES (Admin Panel → Gemini AI)
+────────────────────────────────────────────────────────────────────────────────
+
+Gemini API Key
+    Your AIza... key from Google AI Studio. Stored encrypted at rest, only
+    admins can read or update it. Used for every voice reply and detail
+    extraction.
+
+Reply model (voice chat)
+    The Gemini model that produces the spoken-aloud reply. Keep this fast.
+
+Extraction model (details)
+    A separate (cheaper) Gemini call that pulls structured details
+    (name / email / phone / issue) out of the running transcript.
+    Lite models are perfectly fine here.
+
+Fallback to environment key
+    ON  → if DB key is empty, use the GEMINI_API_KEY backend secret.
+    OFF → only use the DB key. Empty DB key disables the AI assistant.
+
+────────────────────────────────────────────────────────────────────────────────
+8. PERFORMANCE TUNING (already shipped — for reference)
+────────────────────────────────────────────────────────────────────────────────
+
+The widget already optimizes voice quality and latency:
+    • High-quality mic capture (48 kHz, AEC + NS + AGC).
+    • Opus stereo @ 128 kbps SDP override on the WebRTC link.
+    • TTS warmup on first user gesture — eliminates the "first-utterance is
+      silent" issue on Safari / iOS.
+    • Speech-recognition auto-restart after every turn, with retry on
+      transient `no-speech` / `aborted` errors.
+    • Chrome's 15-second TTS pause bug worked-around with a keep-alive
+      pause/resume loop.
+    • Conversation history is capped to the last 16 messages to keep
+      Gemini latency low.
+    • Detail extraction uses the cheap `flash-lite` model so the main reply
+      latency is unaffected.
+
+That's it. Paste a key, click save, and your voice AI is live.
+================================================================================

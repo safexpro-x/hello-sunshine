@@ -1,0 +1,298 @@
+================================================================================
+  ZENTORD — EMPLOYEE / AGENT CREATION GUIDE
+================================================================================
+
+This guide explains EVERYTHING about creating, managing, and signing in
+employees (agents) on Zentord. It covers:
+
+  1. What an "employee" is
+  2. Plan / quota rules
+  3. How a Company Owner adds an employee (Dashboard UI)
+  4. How the new employee signs up and joins the queue
+  5. All backend endpoints (REST + Supabase SDK)
+  6. Push notifications (FCM) for incoming calls
+  7. Disable / re-enable / delete an employee
+  8. Common errors and how to fix them
+  9. End-to-end test checklist
+
+NOTE on terminology:
+  • "Employee" and "Agent" mean the same thing in this app.
+  • An employee belongs to ONE company (multi-tenant).
+  • Only the company owner (or an admin) can add employees.
+
+================================================================================
+  1. WHAT IS AN EMPLOYEE?
+================================================================================
+
+An employee row lives in `public.employees`:
+
+    id            uuid
+    company_id    uuid       -- which company they belong to
+    email         text       -- login email (must be unique to the person)
+    display_name  text
+    role          text       -- 'agent' (default)
+    is_active     boolean    -- false = disabled, can't log in / pick calls
+    user_id       uuid       -- filled when the person signs up at /auth
+    created_at, updated_at
+
+Lifecycle:
+  (a) Owner inserts row  → user_id = NULL, is_active = true
+  (b) Person signs up at /auth with the SAME email
+  (c) `handle_new_user()` trigger links auth.users.id → employees.user_id
+      and grants the `employee` role in `user_roles`.
+  (d) They can now open /agent and pick incoming calls.
+
+================================================================================
+  2. PLAN / QUOTA RULES
+================================================================================
+
+Adding employees is gated by the company's active subscription:
+
+  • `can_company_add_agent(company_id)`     → boolean (used by UI)
+  • `get_company_agent_limits(company_id)`  → (used, quota)
+  • Trigger `enforce_agent_quota` on `employees` blocks INSERT/UPDATE
+    when active employees would exceed `plans.agent_quota`.
+
+Plan rules:
+  • No active plan          → 0 agents allowed (must buy a plan first).
+  • Plan with agent_quota=N → up to N active employees.
+  • Plan with agent_quota=NULL → unlimited.
+
+If quota is hit you'll see:
+  "Agent limit reached for your plan (N allowed). Upgrade your plan…"
+
+================================================================================
+  3. ADDING AN EMPLOYEE — COMPANY DASHBOARD (UI)
+================================================================================
+
+Route: `/company/employees`  (file: `src/pages/CompanyEmployees.tsx`)
+
+Steps for the company owner:
+  1. Sign in at `/auth` as the company owner.
+  2. Open Dashboard → "Employees".
+  3. Quota card at top shows:  "X / Y active agents".
+  4. Fill the form:
+        • Name       → display_name
+        • Email      → the email the agent will use to sign up
+  5. Click "Add agent".
+
+Behind the scenes this runs:
+
+    await supabase.from('employees').insert({
+      company_id,                       // owner's company
+      email: 'agent@yourcompany.com',
+      display_name: 'Agent Name',
+    });
+
+RLS allows this because of the policy "Owner manages own employees":
+    company_id = get_user_company_id(auth.uid())
+
+After insert:
+  • Row appears in the table with status = "Active", Signed up = "Pending".
+  • Send the agent an email/Slack with these instructions:
+        "Sign up at https://YOUR-DOMAIN/auth using <email>.
+         Once you sign up, open /agent to see incoming calls."
+
+================================================================================
+  4. EMPLOYEE FIRST-TIME SIGNUP
+================================================================================
+
+The agent does this once:
+
+  1. Open `https://YOUR-DOMAIN/auth`
+  2. Click "Sign up" tab.
+  3. Enter:
+        • Email      = the SAME email the owner added
+        • Password   = their choice
+        • Name       = display name
+  4. Confirm email if email confirmation is enabled.
+  5. After login, the `handle_new_user()` trigger:
+        UPDATE employees SET user_id = auth.uid()
+          WHERE email = NEW.email AND user_id IS NULL;
+        INSERT INTO user_roles (user_id, role) VALUES (auth.uid(), 'employee');
+  6. They are auto-redirected. They can now go to `/agent`.
+
+If the owner inserts the employee AFTER the person already has an account:
+  • Trigger only runs on signup, so the link won't happen automatically.
+  • Fix: ask the agent to sign out + sign in once, OR run as admin:
+        UPDATE public.employees
+           SET user_id = (SELECT id FROM auth.users WHERE email = '<email>')
+         WHERE email = '<email>' AND user_id IS NULL;
+
+================================================================================
+  5. BACKEND ENDPOINTS  (REST + Supabase SDK)
+================================================================================
+
+Base URL for edge functions:
+  https://fcdyoquezvbvrbplldrm.supabase.co/functions/v1
+
+────────────────────────────────────────────────────────────────────────────
+A. Owner-side (managing employees) — use the Supabase JS SDK
+
+  // Add employee
+  await supabase.from('employees').insert({
+    company_id, email, display_name,
+  });
+
+  // List my company's employees
+  await supabase.from('employees')
+    .select('*')
+    .eq('company_id', company_id)
+    .order('created_at', { ascending: false });
+
+  // Disable / enable
+  await supabase.from('employees')
+    .update({ is_active: false })   // or true
+    .eq('id', employee_id);
+
+  // Delete
+  await supabase.from('employees').delete().eq('id', employee_id);
+
+  // Quota helpers (RPC)
+  await supabase.rpc('get_company_agent_limits', { _company_id: company_id });
+  await supabase.rpc('can_company_add_agent',    { _company_id: company_id });
+
+────────────────────────────────────────────────────────────────────────────
+B. Employee-side (mobile / native app) — REST edge functions
+
+POST  /employee-login                              (public)
+  Body: { "email": "...", "password": "..." }
+  Resp: {
+    "access_token", "refresh_token", "expires_at",
+    "user":     { id, email, ... },
+    "employee": { id, company_id, display_name, role, is_active, ... },
+    "company":  { id, name, status, ... }
+  }
+  Errors:
+    401  invalid email/password
+    403  not an active employee (is_active=false or no employees row)
+
+GET   /employee-queue                              (Bearer access_token)
+  Headers: Authorization: Bearer <access_token>
+  Resp: {
+    "employee_id": "<uuid>",
+    "calls": [
+      { id, room_id, customer_name, customer_issue, language,
+        status, started_at, picked_at, employee_id }
+    ]
+  }
+  Returns only `waiting` + `active` calls for the employee's company.
+
+POST  /employee-fcm-register                       (Bearer access_token)
+  Body: { "fcm_token": "<from FCM>", "platform": "android"|"ios"|"web" }
+  Resp: { "ok": true }
+  Call on app launch and on every FCM token refresh.
+
+POST  /notify-employees-on-call                    (server-only)
+  Invoked automatically by `/call-start` when a customer initiates a call.
+  Pushes FCM to all active devices of the company's employees:
+    notification: { title, body }
+    data: {
+      type: "incoming_call",
+      call_id, room_id, customer_name, language
+    }
+
+────────────────────────────────────────────────────────────────────────────
+C. Accept / End a call (employee app, via Supabase SDK)
+
+  // Accept the call
+  await supabase.from('calls').update({
+    status:     'active',
+    employee_id, // from the login response
+    picked_at:  new Date().toISOString(),
+  }).eq('id', call_id);
+
+  // End the call
+  await supabase.from('calls').update({
+    status:           'ended',
+    ended_at:         new Date().toISOString(),
+    duration_seconds: <seconds>,
+  }).eq('id', call_id);
+
+RLS allows these because the row's `company_id` matches
+`get_employee_company_id(auth.uid())`.
+
+================================================================================
+  6. PUSH NOTIFICATIONS (FCM)
+================================================================================
+
+Server already configured (admin → Brand/Firebase tab):
+  • FIREBASE_SERVICE_ACCOUNT_JSON secret is set.
+  • `notify-employees-on-call` reads `device_tokens` for the company
+    and pushes via FCM v1.
+
+Client app (one-time per device):
+  1. Get FCM token from the SDK (`@react-native-firebase/messaging`,
+     `firebase_messaging`, or web FCM).
+  2. POST it to `/employee-fcm-register` with the access_token.
+  3. Handle foreground + background messages where
+     `data.type === 'incoming_call'` and show a ringer / open the queue.
+
+A full React Native skeleton lives in `public/employeeapp.txt`.
+
+================================================================================
+  7. DISABLE / RE-ENABLE / DELETE
+================================================================================
+
+Disable (recommended when an agent leaves temporarily):
+  UPDATE employees SET is_active = false WHERE id = '<emp_id>';
+  • Existing JWTs keep working until they expire (≤1 hour).
+  • Next `/employee-login` returns 403.
+  • They no longer count toward the agent quota.
+
+Re-enable:
+  UPDATE employees SET is_active = true WHERE id = '<emp_id>';
+  • Quota trigger re-checks; will fail if you're already at the cap.
+
+Hard delete (when the person is fully removed):
+  DELETE FROM employees WHERE id = '<emp_id>';
+  • The auth.users account is NOT deleted (other companies may reuse it
+    in the future). To fully revoke, also remove their `user_roles`
+    row for `role = 'employee'`.
+
+================================================================================
+  8. COMMON ERRORS
+================================================================================
+
+• "Company has no active plan. Buy a plan before adding employees."
+    → Owner has no active subscription. Go to /company/billing.
+
+• "Agent limit reached for your plan (N allowed)…"
+    → Disable an existing agent OR upgrade plan.
+
+• Add succeeded but agent's /agent page is empty / 403
+    → They haven't signed up at /auth yet, OR their email doesn't match
+      EXACTLY (case-sensitive). Re-check the `email` column.
+
+• /employee-login returns 403
+    → `is_active = false`, OR no `employees` row for that email,
+      OR they signed up under a different email.
+
+• FCM pushes never arrive
+    → Check `device_tokens.is_active = true`, FCM token not stale,
+      and `FIREBASE_SERVICE_ACCOUNT_JSON` secret is valid.
+
+• Trigger error: "duplicate key value violates unique constraint"
+    → Email already exists in employees for this company. Each email
+      can only appear once per company.
+
+================================================================================
+  9. END-TO-END TEST CHECKLIST
+================================================================================
+
+  [ ] Owner has an active plan with agent_quota ≥ 1.
+  [ ] Owner adds employee `agent1@test.com` → row appears, "Pending".
+  [ ] Agent signs up at /auth with `agent1@test.com` → row flips to
+      "Signed up = Yes".
+  [ ] Agent opens /agent → sees empty queue, no errors in console.
+  [ ] Customer opens widget → starts a call.
+  [ ] Agent's /agent page shows the call (and FCM ring on device).
+  [ ] Agent clicks "Pick up" → call.status = 'active', WebRTC connects.
+  [ ] Agent ends call → call.status = 'ended', duration recorded.
+  [ ] Owner disables the agent → /employee-login returns 403.
+  [ ] Owner re-enables → login works again.
+  [ ] Owner hits quota → "Add agent" button is disabled, hint shown.
+
+================================================================================
+                            END OF EMPLOYEE GUIDE
+================================================================================

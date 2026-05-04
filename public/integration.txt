@@ -1,0 +1,335 @@
+================================================================================
+ZENTORD — FULL INTEGRATION GUIDE (Web · Android · iOS · React · Flutter · WordPress)
+================================================================================
+
+This guide explains how to embed the Zentord voice-support button in ANY app or
+website. End users get a tiny "Talk to support" button. When pressed, the AI
+hold-assistant chats in the customer's language while your live agent gets
+notified and picks up the call.
+
+────────────────────────────────────────────────────────────────────────────────
+1. PREREQUISITES (one-time admin setup)
+────────────────────────────────────────────────────────────────────────────────
+
+a) Sign up on Zentord as a Company Owner.
+b) Wait for admin approval (you will receive an approval email).
+c) From your Company Dashboard, copy:
+     • Company API key  (vx_xxxxxxxx…)  — identifies your company
+     • App Key          (zk_xxxxxxxx…)  — verifies the embed source
+     • Widget slug      (short id)      — used in the embed URL
+d) (Optional but recommended) Add allowed domains in
+   "Domain whitelist" so that random sites cannot reuse your widget.
+
+────────────────────────────────────────────────────────────────────────────────
+2. THE EMBED URL
+────────────────────────────────────────────────────────────────────────────────
+
+Every integration loads ONE iframe / WebView pointing at:
+
+    https://YOUR-ZENTORD-DOMAIN/w/{slug}?key={APP_KEY}
+
+Replace:
+    {slug}     → your widget slug
+    {APP_KEY}  → your zk_… app key
+
+Optional query params:
+    name=…     → pre-fill customer name
+    email=…    → pre-fill customer email
+    phone=…    → pre-fill customer phone
+    lang=hi    → force initial language (en, hi, mr, te, ta, bn, gu …)
+
+────────────────────────────────────────────────────────────────────────────────
+3. PLAIN HTML / JAVASCRIPT WEBSITE
+────────────────────────────────────────────────────────────────────────────────
+
+Add this snippet just before </body> on every page where you want the button:
+
+<!-- Zentord support button -->
+<script>
+(function(){
+  var SLUG    = "REPLACE_WITH_YOUR_SLUG";
+  var APP_KEY = "REPLACE_WITH_YOUR_zk_KEY";
+  var SRC     = "https://YOUR-ZENTORD-DOMAIN/w/" + SLUG + "?key=" + APP_KEY;
+
+  var btn = document.createElement("button");
+  btn.textContent = "💬 Talk to support";
+  btn.style.cssText = "position:fixed;right:20px;bottom:20px;z-index:2147483600;"
+    + "padding:12px 18px;border:0;border-radius:999px;font:600 14px system-ui;"
+    + "color:#fff;background:linear-gradient(135deg,#7c3aed,#06b6d4);"
+    + "box-shadow:0 10px 30px rgba(124,58,237,.4);cursor:pointer";
+  btn.onclick = function(){
+    if (document.getElementById("zentord-frame")) return;
+    var wrap = document.createElement("div");
+    wrap.id = "zentord-frame";
+    wrap.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,.6);"
+      + "z-index:2147483601;display:flex;align-items:center;justify-content:center";
+    wrap.onclick = function(e){ if (e.target === wrap) wrap.remove(); };
+
+    var f = document.createElement("iframe");
+    f.src = SRC;
+    f.allow = "microphone; autoplay";
+    f.style.cssText = "width:min(420px,100vw);height:min(640px,100vh);"
+      + "border:0;border-radius:16px;background:#0b0b14";
+    wrap.appendChild(f);
+    document.body.appendChild(wrap);
+  };
+  document.body.appendChild(btn);
+})();
+</script>
+
+That is it. No backend code needed on your side.
+
+────────────────────────────────────────────────────────────────────────────────
+4. REACT / NEXT.JS / VITE
+────────────────────────────────────────────────────────────────────────────────
+
+// components/SupportButton.tsx
+import { useState } from "react";
+
+const SLUG = "REPLACE_WITH_YOUR_SLUG";
+const APP_KEY = "REPLACE_WITH_YOUR_zk_KEY";
+const SRC = `https://YOUR-ZENTORD-DOMAIN/w/${SLUG}?key=${APP_KEY}`;
+
+export function SupportButton() {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button
+        onClick={() => setOpen(true)}
+        className="fixed bottom-5 right-5 z-[9999] rounded-full px-5 py-3
+                   text-white shadow-xl bg-gradient-to-r from-violet-600 to-cyan-500"
+      >
+        💬 Talk to support
+      </button>
+      {open && (
+        <div className="fixed inset-0 z-[9999] bg-black/60 grid place-items-center"
+             onClick={(e) => e.target === e.currentTarget && setOpen(false)}>
+          <iframe
+            src={SRC}
+            allow="microphone; autoplay"
+            className="w-[420px] max-w-[100vw] h-[640px] max-h-[100vh] rounded-2xl bg-black"
+          />
+        </div>
+      )}
+    </>
+  );
+}
+
+────────────────────────────────────────────────────────────────────────────────
+5. WORDPRESS
+────────────────────────────────────────────────────────────────────────────────
+
+WordPress Admin → Appearance → Theme File Editor → footer.php
+(or use any "Insert Headers and Footers" plugin)
+
+Paste the same <script> block from section 3 just before </body>.
+Save. Done.
+
+────────────────────────────────────────────────────────────────────────────────
+6. SHOPIFY
+────────────────────────────────────────────────────────────────────────────────
+
+Shopify Admin → Online Store → Themes → Edit code
+Open `layout/theme.liquid`. Paste the script block from section 3 right
+before </body>. Save.
+
+────────────────────────────────────────────────────────────────────────────────
+7. ANDROID (Kotlin / Java) — NATIVE WEBVIEW
+────────────────────────────────────────────────────────────────────────────────
+
+a) AndroidManifest.xml — add microphone permission:
+
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.INTERNET" />
+
+b) Create activity_support.xml:
+
+    <WebView
+        android:id="@+id/webview"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+
+c) SupportActivity.kt:
+
+    class SupportActivity : AppCompatActivity() {
+        private val SLUG = "REPLACE_WITH_YOUR_SLUG"
+        private val APP_KEY = "REPLACE_WITH_YOUR_zk_KEY"
+
+        override fun onCreate(s: Bundle?) {
+            super.onCreate(s)
+            setContentView(R.layout.activity_support)
+
+            // ask mic permission
+            ActivityCompat.requestPermissions(
+                this, arrayOf(Manifest.permission.RECORD_AUDIO), 1
+            )
+
+            val wv = findViewById<WebView>(R.id.webview)
+            wv.settings.javaScriptEnabled = true
+            wv.settings.domStorageEnabled = true
+            wv.settings.mediaPlaybackRequiresUserGesture = false
+
+            wv.webChromeClient = object : WebChromeClient() {
+                override fun onPermissionRequest(req: PermissionRequest) {
+                    runOnUiThread { req.grant(req.resources) }
+                }
+            }
+            wv.loadUrl("https://YOUR-ZENTORD-DOMAIN/w/$SLUG?key=$APP_KEY")
+        }
+    }
+
+d) Launch SupportActivity from any button.
+
+────────────────────────────────────────────────────────────────────────────────
+8. iOS (Swift) — NATIVE WKWEBVIEW
+────────────────────────────────────────────────────────────────────────────────
+
+a) Info.plist — add:
+
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Used to talk to our support team.</string>
+
+b) SupportViewController.swift:
+
+    import WebKit
+    class SupportViewController: UIViewController, WKUIDelegate {
+        let SLUG = "REPLACE_WITH_YOUR_SLUG"
+        let APP_KEY = "REPLACE_WITH_YOUR_zk_KEY"
+        var webView: WKWebView!
+
+        override func viewDidLoad() {
+            super.viewDidLoad()
+            let cfg = WKWebViewConfiguration()
+            cfg.allowsInlineMediaPlayback = true
+            cfg.mediaTypesRequiringUserActionForPlayback = []
+            webView = WKWebView(frame: view.bounds, configuration: cfg)
+            webView.uiDelegate = self
+            view.addSubview(webView)
+            let url = URL(string: "https://YOUR-ZENTORD-DOMAIN/w/\(SLUG)?key=\(APP_KEY)")!
+            webView.load(URLRequest(url: url))
+        }
+    }
+
+────────────────────────────────────────────────────────────────────────────────
+9. FLUTTER
+────────────────────────────────────────────────────────────────────────────────
+
+pubspec.yaml:
+    webview_flutter: ^4.4.0
+    permission_handler: ^11.0.0
+
+dart:
+    import 'package:webview_flutter/webview_flutter.dart';
+    import 'package:permission_handler/permission_handler.dart';
+
+    class SupportPage extends StatefulWidget {
+      const SupportPage({super.key});
+      @override State<SupportPage> createState() => _S();
+    }
+    class _S extends State<SupportPage> {
+      late final WebViewController c;
+      @override void initState() {
+        super.initState();
+        Permission.microphone.request();
+        c = WebViewController()
+          ..setJavaScriptMode(JavaScriptMode.unrestricted)
+          ..loadRequest(Uri.parse(
+            "https://YOUR-ZENTORD-DOMAIN/w/REPLACE_SLUG?key=REPLACE_zk_KEY"));
+      }
+      @override Widget build(BuildContext ctx) =>
+          Scaffold(body: WebViewWidget(controller: c));
+    }
+
+For Android, also add RECORD_AUDIO permission in AndroidManifest.xml
+(see section 7a). For iOS add NSMicrophoneUsageDescription (section 8a).
+
+────────────────────────────────────────────────────────────────────────────────
+10. REACT NATIVE
+────────────────────────────────────────────────────────────────────────────────
+
+npm i react-native-webview
+
+import { WebView } from 'react-native-webview';
+<WebView
+  source={{ uri: "https://YOUR-ZENTORD-DOMAIN/w/SLUG?key=APP_KEY" }}
+  mediaPlaybackRequiresUserAction={false}
+  javaScriptEnabled
+  domStorageEnabled
+  originWhitelist={['*']}
+/>
+
+iOS: NSMicrophoneUsageDescription in Info.plist.
+Android: <uses-permission android:name="android.permission.RECORD_AUDIO" />
+
+────────────────────────────────────────────────────────────────────────────────
+11. HOW THE APP-KEY VERIFICATION WORKS (security)
+────────────────────────────────────────────────────────────────────────────────
+
+When the widget loads, our `widget-bootstrap` edge function checks:
+
+  1. The slug is active and belongs to an APPROVED company.
+  2. The `key` query param matches an active App Key for that company.
+  3. The browser's origin/referer is in the company's domain whitelist
+     (if the whitelist is non-empty).
+  4. The caller IP is not in the blocked-IPs list.
+  5. The company has an ACTIVE plan with remaining call quota.
+
+If any check fails, the widget shows a polite "service unavailable" screen.
+This means even if someone copies your slug, they cannot abuse your quota
+from a domain you have not approved.
+
+────────────────────────────────────────────────────────────────────────────────
+12. AGENT NOTIFICATIONS (mobile push)
+────────────────────────────────────────────────────────────────────────────────
+
+When a customer starts a call, ALL active employees of your company get a
+real-time push notification (via Firebase Cloud Messaging). To enable on the
+agent's phone:
+
+  1. Sign in as the employee in the Zentord agent app/web dashboard.
+  2. Allow notifications when prompted.
+  3. The employee dashboard page will register the FCM token automatically.
+
+────────────────────────────────────────────────────────────────────────────────
+13. PRE-FILLING CUSTOMER INFO (optional)
+────────────────────────────────────────────────────────────────────────────────
+
+If your app already knows the user (e.g. logged-in customer), pass info
+in the URL so the AI does not need to ask again:
+
+    https://…/w/SLUG?key=KEY&name=Rohan&email=rohan@x.com&phone=%2B91...
+
+URL-encode every value. The AI will skip the matching question.
+
+────────────────────────────────────────────────────────────────────────────────
+14. STYLING THE FLOATING BUTTON
+────────────────────────────────────────────────────────────────────────────────
+
+The script in section 3 is yours — change colors, position, label, icon,
+or hide it on small screens. Only the iframe URL needs to remain intact.
+
+────────────────────────────────────────────────────────────────────────────────
+15. TROUBLESHOOTING
+────────────────────────────────────────────────────────────────────────────────
+
+• "Microphone blocked" — your site MUST be served over HTTPS for browser
+  mic access. Localhost works for testing.
+• "Domain not allowed" — add the domain in your Company → Security →
+  Domain whitelist.
+• "Plan expired" — buy or renew a plan from Company → Billing.
+• "Agent did not pick up" — confirm at least one employee is signed in
+  and has notifications enabled.
+• Mobile WebView audio silent — make sure
+  `mediaPlaybackRequiresUserGesture = false` (Android) or
+  `mediaTypesRequiringUserActionForPlayback = []` (iOS).
+
+────────────────────────────────────────────────────────────────────────────────
+16. SUPPORT
+────────────────────────────────────────────────────────────────────────────────
+
+For help with integration, contact your Zentord administrator (the email
+configured in Admin → Site content → Contact us).
+
+================================================================================
+END
+================================================================================

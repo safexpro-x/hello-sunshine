@@ -1,0 +1,12 @@
+User-agent: *
+Allow: /
+
+Disallow: /admin
+Disallow: /agent
+Disallow: /company
+Disallow: /onboard
+Disallow: /account
+Disallow: /reset-password
+Disallow: /verify-email
+
+Sitemap: https://chat-bridge-aid.lovable.app/sitemap.xml

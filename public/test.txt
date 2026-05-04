@@ -1,0 +1,152 @@
+================================================================================
+  ZENTORD — END-TO-END PRODUCTION TEST PLAN
+================================================================================
+
+This file walks you through verifying EVERY piece of the platform before
+opening it to real customers. Tick each box. If anything fails, fix it
+before going live.
+
+────────────────────────────────────────────────────────────────────────────
+  PRE-REQUISITES
+────────────────────────────────────────────────────────────────────────────
+  [ ] Production domain pointed at the Lovable-published URL (or your VPS)
+  [ ] HTTPS certificate active (Let's Encrypt / Cloudflare)
+  [ ] Admin account created (admin@gmail.com) and password known
+  [ ] Firebase project: web app added; service account JSON saved as
+      FIREBASE_SERVICE_ACCOUNT_JSON secret in Lovable Cloud
+  [ ] Razorpay test keys saved in Admin → Razorpay
+  [ ] SMTP host configured in Admin → SMTP
+
+================================================================================
+  1. ADMIN PANEL — FIRST RUN
+================================================================================
+
+  [ ] Sign in as admin@gmail.com → /admin loads
+  [ ] Brand tab:
+        - upload a logo PNG → preview updates → click Save
+        - reload site, logo appears in header + favicon updates
+        - change primary color to e.g. `262 83% 58%` → Save → reload →
+          accent buttons turn purple
+  [ ] Firebase tab:
+        - paste project_id, web_api_key, auth_domain, app_id
+        - toggle "Enabled" → Save
+  [ ] SMTP tab → click "Send test email" → arrives in inbox
+  [ ] Razorpay tab → toggle test mode → save
+
+================================================================================
+  2. COMPANY ONBOARDING
+================================================================================
+
+Test in incognito with a SECOND email.
+  [ ] /auth → Sign up new user → check inbox for verification email
+  [ ] /onboard → fill company details → submit
+  [ ] Admin sees Pending → Approve → Status flips to Approved
+  [ ] Owner /company shows live dashboard
+
+================================================================================
+  3. SECURITY (DOMAIN + APP KEY)
+================================================================================
+
+  [ ] Dashboard → Security → Allowed domains:
+        - leave empty → call from any random domain works (open in private)
+        - add `mysite.com` → call from `localhost` is BLOCKED with
+          "Calls from http://localhost not allowed by this company."
+        - call from `https://mysite.com/page` succeeds
+        - call from `https://shop.mysite.com` succeeds (subdomain match)
+  [ ] Dashboard → Security → App integration keys:
+        - click "New key" → key generated → copy
+        - hit /call-start with curl using x-app-key header → call_id returned
+          even though Origin is missing/disallowed
+        - revoke key → same curl now returns 403 "Invalid app integration key"
+
+  Curl example for app-key path:
+
+    curl -X POST \
+      https://fcdyoquezvbvrbplldrm.supabase.co/functions/v1/call-start \
+      -H "Content-Type: application/json" \
+      -H "x-app-key: zk_YOUR_KEY" \
+      -d '{"slug":"<your-slug>","customer_name":"Test"}'
+
+================================================================================
+  4. PLAN GATING & QUOTA
+================================================================================
+
+  [ ] /company/billing → buy a plan in Razorpay TEST mode
+  [ ] After payment, Subscription row appears, days_left & quota show
+  [ ] Burn through quota using Test calls until quota = 0
+  [ ] Next call attempt returns 402 "plan_inactive"
+  [ ] Buy a renewal → quota resets
+
+================================================================================
+  5. CUSTOMER VOICE CALL — END-TO-END
+================================================================================
+
+For each browser (Chrome desktop, Safari iOS, Chrome Android, Edge):
+  [ ] Open the widget URL
+  [ ] Pick language → enter name → Start call
+  [ ] Mic permission prompt appears → allow
+  [ ] AI greeting plays clearly (no robotic audio, no clipping)
+  [ ] Speak a question → AI replies in the chosen language within 3s
+  [ ] Open /agent on a SECOND device → call shows in queue
+  [ ] Agent clicks "Pick" → both sides hear each other
+  [ ] Mute / unmute toggles work on both sides
+  [ ] Call duration timer increments
+  [ ] End call → status flips to "ended", duration saved
+  [ ] Refresh dashboard → call appears in Recent calls with correct duration
+
+Audio quality bar (subjective):
+  [ ] No echo (AEC working)
+  [ ] No background hiss (NS working)
+  [ ] Voice volume stable (AGC working)
+  [ ] Music / stereo source played near mic still sounds intelligible
+        (Opus 48 kHz path active)
+
+================================================================================
+  6. EMPLOYEE APP (REACT NATIVE)
+================================================================================
+
+  [ ] Build the sample app from /employeeapp.txt
+  [ ] Login with an employee account → token stored
+  [ ] FCM token registered → row appears in `device_tokens` table
+  [ ] Customer starts a call from the website
+  [ ] Phone receives a heads-up notification "Incoming support call"
+  [ ] Tap notification → app opens, queue shows the call
+  [ ] Open the WebView /agent route → join the call → audio works
+
+================================================================================
+  7. SECURITY HARDENING CHECKS
+================================================================================
+
+  [ ] DevTools network tab on /c/<slug> shows NO occurrence of `vx_…`
+      (real api_key never leaks)
+  [ ] Run `npx supabase db lint` (or use the platform linter) → 0 NEW
+      warnings introduced (3 pre-existing warnings on legacy policies are
+      acceptable for now)
+  [ ] /reset-password flow works for company owner
+  [ ] Admin password recovery via DB (see /server.txt section 8) works
+  [ ] WebRTC inspector (chrome://webrtc-internals) shows
+      `DTLS-SRTP` enabled and `srtp-aes-128-gcm` cipher
+
+================================================================================
+  8. LOAD / RESILIENCE
+================================================================================
+
+  [ ] Start 5 simultaneous calls from 5 browsers → all reach AI hold
+  [ ] Kill agent tab mid-call → customer sees "ended", row marked ended
+  [ ] Disconnect Wi-Fi during call → reconnect resumes WebRTC within 5s
+  [ ] Stop the FCM service-account secret → call-start still succeeds,
+      function logs "skipped: no_service_account" (graceful degradation)
+
+================================================================================
+  9. POST-LAUNCH DAILY CHECKS
+================================================================================
+
+  [ ] Edge function logs (Lovable Cloud → Functions) show no 5xx spikes
+  [ ] `email_outbox` table has zero `status='failed'` rows
+  [ ] `subscriptions` table → no rows with expires_at < now AND status='active'
+        (the plan-expiry-check function runs daily; verify it ran)
+  [ ] Storage bucket `branding` size < 50 MB
+
+================================================================================
+                                END OF TEST PLAN
+================================================================================

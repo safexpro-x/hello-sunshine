@@ -1,0 +1,46 @@
+project_id = "fcdyoquezvbvrbplldrm"
+
+[functions.ai-assistant]
+verify_jwt = false
+
+[functions.widget-bootstrap]
+verify_jwt = false
+
+[functions.call-start]
+verify_jwt = false
+
+[functions.password-reset-request]
+verify_jwt = false
+
+[functions.password-reset-confirm]
+verify_jwt = false
+
+[functions.firebase-bridge]
+verify_jwt = false
+
+[functions.firebase-public-config]
+verify_jwt = false
+
+[functions.employee-login]
+verify_jwt = false
+
+[functions.employee-queue]
+verify_jwt = false
+
+[functions.employee-fcm-register]
+verify_jwt = false
+
+[functions.notify-employees-on-call]
+verify_jwt = false
+
+[functions.process-email-outbox]
+verify_jwt = false
+
+[functions.plan-expiry-check]
+verify_jwt = false
+
+[functions.signup-request]
+verify_jwt = false
+
+[functions.verify-email]
+verify_jwt = false

@@ -1,0 +1,123 @@
+# Voice AI Setup Guide — Zentord (v2026.05)
+
+Zentord ka voice hold-assistant 2 providers support karta hai:
+  • **OpenAI** (apna API key chahiye — premium quality, aap directly OpenAI ko pay karte ho)
+  • **Lovable AI** (built-in, koi key nahi — Lovable workspace billing)
+
+Admin Panel → **Voice AI** tab se kabhi bhi switch kar sakte ho.
+Change turant next call pe apply hota hai (no redeploy needed).
+Provider down ho ya rate-limit lage to AI automatically ek
+localized fallback line bolta hai — customer ko kabhi backend
+error nahi dikhta.
+
+Customer widget me ab **Speaker on/off** button bhi hai — user
+chahe to AI ki awaaz mute kar sakta hai bina call cut kiye.
+
+Agar OpenAI use karna hai, neeche steps follow karo. Lovable AI ke liye:
+  Admin → Voice AI → "Lovable AI" select → Save. Bas. Koi key nahi chahiye.
+
+---
+
+## Step 1 — OpenAI API Key banao
+
+1. Go to: https://platform.openai.com/api-keys
+2. Login / Sign up karo (agar pehli baar use kar rahe ho).
+3. **"Create new secret key"** click karo.
+4. Naam do: `Zentord Voice AI`
+5. Permissions: **All** rakho.
+6. Key copy karo — yeh `sk-...` se start hoti hai.
+   ⚠️ Yeh key sirf ek baar dikhti hai — turant copy karo.
+
+## Step 2 — Billing add karo (zaroori hai)
+
+OpenAI free tier limited hai. Production ke liye:
+
+1. https://platform.openai.com/account/billing/overview
+2. **Add payment method** → card add karo.
+3. **Add credits** → minimum $5–$10 daal do (months chalega).
+4. (Optional) **Usage limits** set karo taa ki accidental over-spend na ho.
+
+## Step 3 — Zentord Admin Panel me key save karo
+
+1. Apne Zentord admin panel me login karo.
+2. Top tabs me jao: **Admin → OpenAI** tab.
+3. **OpenAI API Key** field me apni `sk-...` key paste karo.
+4. Models default chodho ya badlo:
+   - **Reply model** (voice chat): `gpt-4o-mini` ← recommended (fast + sasta)
+     - Premium quality chahiye to: `gpt-4o`
+   - **Extract model** (details extraction): `gpt-4o-mini` ← recommended
+5. **Fallback to environment key**: ON rakho (safe).
+6. **Save OpenAI settings** click karo.
+
+✅ Done. Next call se naya key use hoga — koi redeploy nahi chahiye.
+
+---
+
+## Models — kya choose karu?
+
+| Model | Speed | Cost | Quality | Use case |
+|---|---|---|---|---|
+| `gpt-4o-mini` | ⚡⚡⚡ Fast | 💰 Sasta | ⭐⭐⭐⭐ | **Default — best balance** |
+| `gpt-4o` | ⚡⚡ Medium | 💰💰💰 | ⭐⭐⭐⭐⭐ | Premium calls, complex queries |
+| `gpt-4.1-mini` | ⚡⚡⚡ Fast | 💰 Sasta | ⭐⭐⭐⭐ | Alternative to 4o-mini |
+
+Recommendation: **`gpt-4o-mini` for both fields** — production ke liye best.
+
+---
+
+## Cost estimate
+
+`gpt-4o-mini`:
+- Input: $0.15 per 1M tokens
+- Output: $0.60 per 1M tokens
+- Average voice call (~3 min hold) = ~$0.001–$0.003 per call
+- $5 credit ≈ 1500–5000 calls
+
+`gpt-4o`:
+- Input: $2.50 per 1M tokens
+- Output: $10 per 1M tokens
+- Average call ≈ $0.02–$0.05
+
+---
+
+## Key kabhi bhi change karna hai?
+
+1. Admin Panel → OpenAI tab.
+2. Naya key paste karo → Save.
+3. Bas. Next call se naya key use hoga.
+
+Old key ko OpenAI dashboard se **revoke** karna mat bhulna:
+https://platform.openai.com/api-keys
+
+---
+
+## Troubleshooting
+
+**"OpenAI API key not configured"**
+→ Admin → OpenAI tab me key save nahi hui. Save karo.
+
+**"OpenAI 401: Incorrect API key"**
+→ Key galat ya revoked. Naya key banao.
+
+**"OpenAI 429: Rate limit"**
+→ Billing add karo / credits daalo. Free tier exhaust ho gaya.
+
+**"OpenAI 402 / insufficient_quota"**
+→ Credits khatam. https://platform.openai.com/account/billing par recharge karo.
+
+**Voice AI bolta nahi**
+→ Browser ke address bar me 🔒 → **Microphone Allow** karo.
+→ Chrome / Edge / Android Chrome use karo (Safari partial support).
+
+---
+
+## Security note
+
+- Aapki API key **encrypted at rest** stored hoti hai database me.
+- Sirf **admin role wale users** padh ya update kar sakte hain.
+- Edge function service-role se access karta hai — client-side me kabhi expose nahi hota.
+- `OPENAI_API_KEY` environment variable bhi fallback ke liye saved hai.
+
+---
+
+Kuch bhi atke to admin panel ke **OpenAI** tab par ek baar Save dabake refresh kar lo — usually fix ho jata hai.
