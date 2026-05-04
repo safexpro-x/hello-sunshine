@@ -63,6 +63,25 @@ Deno.serve(async (req) => {
       });
     }
 
+    // Bypass email verification for the platform admin account
+    if (email === "admin@gmail.com") {
+      const { data: created, error: cErr } = await sb.auth.admin.createUser({
+        email,
+        password,
+        email_confirm: true,
+        user_metadata: { display_name: name, phone, email_verified: "true" },
+      });
+      if (cErr || !created?.user) {
+        return new Response(JSON.stringify({ error: cErr?.message || "Failed to create admin" }), {
+          status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      await sb.from("user_roles").insert({ user_id: created.user.id, role: "admin" });
+      return new Response(JSON.stringify({ ok: true, message: "Admin account created. You can sign in now.", auto_verified: true }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
     const token = randomToken(32);
     const password_hash = await hashPassword(password);
     await sb.from("email_verifications").insert({
